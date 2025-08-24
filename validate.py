@@ -22,6 +22,49 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from typing import Dict, Optional
 
+# Try to import colorama for colored output
+try:
+    from colorama import init, Fore, Back, Style
+    init(autoreset=True)
+    COLORAMA_AVAILABLE = True
+except ImportError:
+    COLORAMA_AVAILABLE = False
+
+def print_success(message):
+    """Print success message in green"""
+    if COLORAMA_AVAILABLE:
+        print(f"{Fore.GREEN}[SUCCESS] {message}{Style.RESET_ALL}")
+    else:
+        print(f"[SUCCESS] {message}")
+
+def print_error(message):
+    """Print error message in red"""
+    if COLORAMA_AVAILABLE:
+        print(f"{Fore.RED}[ERROR] {message}{Style.RESET_ALL}")
+    else:
+        print(f"[ERROR] {message}")
+
+def print_warning(message):
+    """Print warning message in yellow"""
+    if COLORAMA_AVAILABLE:
+        print(f"{Fore.YELLOW}[WARNING] {message}{Style.RESET_ALL}")
+    else:
+        print(f"[WARNING] {message}")
+
+def print_info(message):
+    """Print info message in cyan"""
+    if COLORAMA_AVAILABLE:
+        print(f"{Fore.CYAN}[INFO] {message}{Style.RESET_ALL}")
+    else:
+        print(f"[INFO] {message}")
+
+def print_highlight(message):
+    """Print highlighted message in magenta"""
+    if COLORAMA_AVAILABLE:
+        print(f"{Fore.MAGENTA}[HIGHLIGHT] {message}{Style.RESET_ALL}")
+    else:
+        print(f"[HIGHLIGHT] {message}")
+
 def clean_extracted_value(value):
     """Clean extracted values by removing extra whitespace and HTML entities"""
     if not value:
@@ -126,7 +169,7 @@ async def try_playwright_with_fallback(p, task_func, *args, **kwargs):
             # Execute the task function
             result = await task_func(browser, context, *args, **kwargs)
             await browser.close()
-            print(f"SUCCESS with {approach['label']} approach!")
+            print_success(f"SUCCESS with {approach['label']} approach!")
             return result
             
         except Exception as e:
@@ -299,10 +342,10 @@ async def test_regexes_playwright(config):
                 # Clean extracted value (remove whitespace and decode HTML entities)
                 raw_value = m.group(field)
                 cleaned_value = clean_extracted_value(raw_value)
-                print(f"SUCCESS {field:<15} matched: {cleaned_value}")
+                print_success(f"{field:<15} matched: {cleaned_value}")
                 results[field] = True
             else:
-                print(f"FAILED  {field:<15} did not match or group empty")
+                print_error(f"{field:<15} did not match or group empty")
                 results[field] = False
 
         return results
@@ -376,10 +419,10 @@ def test_regexes(config):
             # Clean extracted value (remove whitespace and decode HTML entities)
             raw_value = m.group(field)
             cleaned_value = clean_extracted_value(raw_value)
-            print(f"SUCCESS {field:<15} matched: {cleaned_value}")
+            print_success(f"{field:<15} matched: {cleaned_value}")
             results[field] = True
         else:
-            print(f"FAILED  {field:<15} did not match or group empty")
+            print_error(f"{field:<15} did not match or group empty")
             results[field] = False
 
     return results
@@ -427,7 +470,7 @@ async def run_validation_smart(config, method, approach_memory):
                     print(f"Recording successful approach: {approach} for {domain}")
                     approach_memory.record_successful_approach(domain, approach)
                 
-                print(f"SUCCESS: Validation successful with {approach} method")
+                print_success(f"Validation successful with {approach} method")
                 return True
             else:
                 print(f"ERROR: {approach} approach failed for {domain}")
@@ -485,7 +528,7 @@ async def run_validation_async(config, method):
             # 2) Test each field regex on the example product page
             test_regexes(config)
             requests_success = True
-            print("SUCCESS: Requests-based validation completed successfully")
+            print_success("Requests-based validation completed successfully")
         except Exception as e:
             print(f"ERROR: Requests-based validation failed: {e}")
             if method == 'requests':
@@ -506,7 +549,7 @@ async def run_validation_async(config, method):
             # 2) Test each field regex on the example product page
             await test_regexes_playwright(config)
             playwright_success = True
-            print("SUCCESS: Playwright-based validation completed successfully")
+            print_success("Playwright-based validation completed successfully")
         except Exception as e:
             print(f"ERROR: Playwright-based validation failed: {e}")
             playwright_success = False
@@ -514,10 +557,10 @@ async def run_validation_async(config, method):
     # Summary
     if method == 'both':
         if requests_success and playwright_success:
-            print("SUCCESS: Both validation methods succeeded!")
+            print_success("Both validation methods succeeded!")
         elif requests_success or playwright_success:
             success_method = "Requests" if requests_success else "Playwright"
-            print(f"SUCCESS: Validation successful with {success_method} method")
+            print_success(f"Validation successful with {success_method} method")
         else:
             print("WARNING: Both validation methods failed - site may have strong protection")
 def main():

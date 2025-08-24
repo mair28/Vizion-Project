@@ -436,8 +436,8 @@ class AsyncURLProcessor:
                         print(f"✅ [{current_count}] VALID ({approach}): {url.strip()} ({count} instances)")
                         return True, count, url.strip()
                     else:
-                        if current_count % 20 == 0:  # Log every 20th invalid URL
-                            print(f"❌ [{current_count}] INVALID ({approach}): {url.strip()} ({count} instances)")
+                        # Show all URLs for real-time monitoring
+                        print(f"❌ [{current_count}] INVALID ({approach}): {url.strip()} ({count} instances)")
                         return "invalid", count, url.strip()
                         
                 finally:
@@ -458,9 +458,14 @@ class AsyncURLProcessor:
     async def _process_response(self, response, url, approach):
         """Process HTTP response and check for pattern"""
         if response.status == 200:
-            html_content = await response.text()
-            matches = re.findall(self.pattern, html_content, re.IGNORECASE)
-            count = len(matches)
+            try:
+                html_content = await response.text()
+                matches = re.findall(self.pattern, html_content, re.IGNORECASE)
+                count = len(matches)
+            except Exception as e:
+                # Failed to read response content
+                print(f"⚠️  Failed to read response content for {url}: {str(e)[:50]}")
+                return "invalid", 0, url.strip()
             
             # Thread-safe counter updates
             async with self._counter_lock:
@@ -479,8 +484,8 @@ class AsyncURLProcessor:
                 print(f"✅ [{current_count}] VALID ({approach}): {url.strip()} ({count} instances)")
                 return True, count, url.strip()
             else:
-                if current_count % 20 == 0:  # Log every 20th invalid URL to reduce spam
-                    print(f"❌ [{current_count}] INVALID ({approach}): {url.strip()} ({count} instances)")
+                # Show all URLs for real-time monitoring
+                print(f"❌ [{current_count}] INVALID ({approach}): {url.strip()} ({count} instances)")
                 # Return "invalid" status (not retry-able) - use special return value
                 return "invalid", count, url.strip()
         else:
@@ -668,9 +673,13 @@ class AsyncURLProcessor:
     async def _analyze_response(self, response, test_url, approach, domain):
         """Analyze HTTP response and provide detailed feedback"""
         if response.status == 200:
-            html_content = await response.text()
-            matches = re.findall(self.pattern, html_content, re.IGNORECASE)
-            count = len(matches)
+            try:
+                html_content = await response.text()
+                matches = re.findall(self.pattern, html_content, re.IGNORECASE)
+                count = len(matches)
+            except Exception as e:
+                print(f"⚠️  Failed to read response content during analysis for {domain}: {str(e)[:50]}")
+                return False, 0
             
             print(f"    📄 Got HTML content: {len(html_content)} characters")
             print(f"    🔍 Pattern: {self.pattern}")
@@ -680,9 +689,12 @@ class AsyncURLProcessor:
             if count == 0:
                 suffix = "_proxy" if approach == "proxy" else ""
                 sample_filename = f"html_sample_{domain.replace('.', '_')}{suffix}.html"
-                with open(sample_filename, 'w', encoding='utf-8') as f:
-                    f.write(html_content)
-                print(f"    💾 Saved HTML sample to {sample_filename} for inspection")
+                try:
+                    with open(sample_filename, 'w', encoding='utf-8') as f:
+                        f.write(html_content)
+                    print(f"    💾 Saved HTML sample to {sample_filename} for inspection")
+                except Exception as e:
+                    print(f"    ⚠️  Could not save HTML sample: {str(e)[:50]}")
                 
                 # Show a snippet of the HTML
                 print("    🔍 HTML snippet (first 500 chars):")
@@ -933,7 +945,12 @@ Examples:
     if args.count is None:
         count_input = input(f"\nEnter minimum count of pattern occurrences (default: 25): ").strip()
         if count_input and count_input.isdigit():
-            args.count = int(count_input)
+            count_value = int(count_input)
+            if count_value > 0:
+                args.count = count_value
+            else:
+                print("⚠️  Count must be positive, using default: 25")
+                args.count = 25
         else:
             args.count = 25
             print(f"Using default: {args.count}")
@@ -948,8 +965,15 @@ Examples:
     try:
         # Read URL file
         print(f"📁 Reading {args.file} file...")
-        with open(args.file, 'r', encoding='utf-8') as f:
-            content = f.read()
+        try:
+            with open(args.file, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except FileNotFoundError:
+            print(f"❌ Error: File '{args.file}' not found!")
+            return
+        except Exception as e:
+            print(f"❌ Error reading file '{args.file}': {str(e)}")
+            return
         
         # Extract URLs using regex (handles malformed XML)
         print("🔍 Extracting URLs from content...")
@@ -983,15 +1007,15 @@ Examples:
         elif choice == '4':
             # Ask user for custom concurrent value
             while True:
-                custom_input = input(f"Enter custom concurrent value (5-100, recommended: 20-80): ").strip()
+                custom_input = input(f"Enter custom concurrent value (5-1000, recommended: 20-200): ").strip()
                 if custom_input.isdigit():
                     custom_concurrent = int(custom_input)
-                    if 5 <= custom_concurrent <= 100:
+                    if 5 <= custom_concurrent <= 1000:
                         max_concurrent = custom_concurrent
                         speed_name = "CUSTOM"
                         break
                     else:
-                        print("⚠️  Please enter a value between 5 and 100")
+                        print("⚠️  Please enter a value between 5 and 1000")
                 else:
                     print("⚠️  Please enter a valid number")
         else:

@@ -176,9 +176,74 @@ class UniversalWebsiteAnalyzer:
         self.approach_memory = ApproachMemory()
         self.deep_analysis = deep_analysis
         
+        # Initialize analysis results storage
+        self.analysis_results = {
+            'product_patterns': [],
+            'field_patterns': {},
+            'site_info': {},
+            'sample_pages': {},
+            'protection_detected': [],
+            'errors': [],
+            'recommended_config': {}
+        }
+        
         # Initialize OpenAI
         if self.use_ai:
             self._setup_openai()
+    
+    def _validate_gtin_upc(self, code: str) -> bool:
+        """Validate if a code is a valid GTIN/UPC format"""
+        if not code or not isinstance(code, str):
+            return False
+        
+        # Remove any non-digit characters
+        clean_code = ''.join(filter(str.isdigit, code))
+        
+        # Valid GTIN/UPC lengths: 8, 12, 13, 14 digits
+        valid_lengths = [8, 12, 13, 14]
+        if len(clean_code) not in valid_lengths:
+            return False
+        
+        # Check if all zeros (invalid)
+        if clean_code == '0' * len(clean_code):
+            return False
+        
+        # Validate check digit using GTIN algorithm
+        return self._validate_gtin_check_digit(clean_code)
+    
+    def _validate_gtin_check_digit(self, code: str) -> bool:
+        """Validate GTIN check digit using the standard algorithm"""
+        try:
+            # Convert to list of integers
+            digits = [int(d) for d in code]
+            
+            # Calculate check digit using GTIN algorithm
+            check_sum = 0
+            
+            # For GTIN, we start from the rightmost digit (excluding check digit)
+            # and alternate weights 3 and 1 from right to left
+            for i in range(len(digits) - 1):
+                position_from_right = len(digits) - 2 - i  # Position from right (0-based)
+                weight = 3 if position_from_right % 2 == 0 else 1  # Odd positions get weight 3
+                check_sum += digits[i] * weight
+            
+            # Calculate the check digit
+            calculated_check = (10 - (check_sum % 10)) % 10
+            
+            # Compare with the actual check digit
+            return calculated_check == digits[-1]
+        except (ValueError, IndexError):
+            return False
+    
+    def _create_gtin_upc_regex(self, base_pattern: str) -> str:
+        """Create a regex pattern that only matches valid GTIN/UPC codes"""
+        # Extract the capture group from the base pattern
+        if '(' in base_pattern and ')' in base_pattern:
+            # Replace the generic capture group with a GTIN-specific one
+            # GTIN/UPC: 8, 12, 13, or 14 digits only
+            gtin_pattern = r'(\d{8}|\d{12}|\d{13}|\d{14})'
+            return base_pattern.replace(r'([A-Za-z0-9-_]+)', gtin_pattern).replace(r'([A-Za-z0-9-_\s\.]+)', gtin_pattern)
+        return base_pattern
         
         # Load proxies - Webshare rotating proxy only
         self.proxies = []
@@ -1383,7 +1448,7 @@ Return as JSON array in this format:
                 improved = json.loads(json_content)
                 
                 if isinstance(improved, list) and improved:
-                    print("✅ AI improved the patterns")
+                    print("[SUCCESS] AI improved the patterns")
                     return improved
                     
         except Exception as e:
@@ -1441,7 +1506,7 @@ Return as JSON object in this format:
                 improved = json.loads(json_content)
                 
                 if isinstance(improved, dict) and improved:
-                    print("✅ AI improved the field patterns")
+                    print("[SUCCESS] AI improved the field patterns")
                     return improved
                     
         except Exception as e:
@@ -2989,13 +3054,20 @@ if result:
                 # Try to get the named group
                 try:
                     value = match.group(field_name)
-                    if value and value.strip():
+                    # Allow null or empty values for better pattern capture
+                    if value is None:
+                        # Pattern matched but captured null - this is valid for null-handling patterns
+                        return True
+                    elif value.strip():
                         # Decode HTML entities for human-readable text
                         decoded_value = unescape(value.strip())
                         # Additional validation based on field type
                         return self._is_valid_field_value(field_name, decoded_value)
+                    else:
+                        # Empty string is also valid for null-capable patterns
+                        return True
                 except (IndexError, KeyError):
-                    # Named group doesn't exist or is empty
+                    # Named group doesn't exist - pattern structure issue
                     return False
             return False
         except Exception as e:
@@ -3565,37 +3637,112 @@ if result:
                 {'type': 'regex', 'pattern': r'product\s*number["\s:]*([A-Za-z0-9-_\s\.]+)'},
             ],
             'Model_Number': [
-                # Meta tags
+                # Meta tags - Comprehensive coverage
                 {'type': 'meta', 'attrs': {'itemprop': 'model'}, 'attr': 'content'},
                 {'type': 'meta', 'attrs': {'itemprop': 'mpn'}, 'attr': 'content'},
                 {'type': 'meta', 'attrs': {'name': 'model'}, 'attr': 'content'},
                 {'type': 'meta', 'attrs': {'name': 'mpn'}, 'attr': 'content'},
                 {'type': 'meta', 'attrs': {'name': 'part-number'}, 'attr': 'content'},
-                # Data attributes
+                {'type': 'meta', 'attrs': {'name': 'partnumber'}, 'attr': 'content'},
+                {'type': 'meta', 'attrs': {'name': 'part_number'}, 'attr': 'content'},
+                {'type': 'meta', 'attrs': {'name': 'model-number'}, 'attr': 'content'},
+                {'type': 'meta', 'attrs': {'name': 'model_number'}, 'attr': 'content'},
+                {'type': 'meta', 'attrs': {'name': 'manufacturer-part-number'}, 'attr': 'content'},
+                
+                # Data attributes - Extended coverage
                 {'type': 'data', 'attr': 'data-model'},
                 {'type': 'data', 'attr': 'data-model-number'},
+                {'type': 'data', 'attr': 'data-model-num'},
                 {'type': 'data', 'attr': 'data-part-number'},
+                {'type': 'data', 'attr': 'data-part-num'},
+                {'type': 'data', 'attr': 'data-partnumber'},
                 {'type': 'data', 'attr': 'data-mpn'},
                 {'type': 'data', 'attr': 'data-part'},
-                {'type': 'data', 'attr': 'data-partnumber'},
-                # CSS classes
-                {'type': 'class', 'classes': ['model', 'model-number', 'part-number', 'product-model', 'item-model', 'mpn', 'partnumber', 'part-num', 'model-num']},
-                # ID selectors
-                {'type': 'id', 'ids': ['model', 'model-number', 'part-number', 'mpn', 'partnumber']},
-                # Regex patterns
-                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*model[^"]*"[^>]*>([A-Za-z0-9-_\s\.]+)</span>'},
-                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*mpn[^"]*"[^>]*>([A-Za-z0-9-_\s\.]+)</span>'},
-                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*part[^"]*"[^>]*>([A-Za-z0-9-_\s\.]+)</span>'},
-                {'type': 'regex', 'pattern': r'"model"\s*:\s*"([A-Za-z0-9-_\s\.]+)"'},
-                {'type': 'regex', 'pattern': r'"mpn"\s*:\s*"([A-Za-z0-9-_\s\.]+)"'},
-                {'type': 'regex', 'pattern': r'model["\s#:]*([A-Za-z0-9-_\s\.]+)'},
-                {'type': 'regex', 'pattern': r'mpn["\s#:]*([A-Za-z0-9-_\s\.]+)'},
-                {'type': 'regex', 'pattern': r'part\s*#?\s*:?\s*([A-Za-z0-9-_\s\.]+)'},
-                {'type': 'regex', 'pattern': r'part\s*number["\s#:]*([A-Za-z0-9-_\s\.]+)'},
-                {'type': 'regex', 'pattern': r'manufacturer\s*part["\s#:]*([A-Za-z0-9-_\s\.]+)'},
+                {'type': 'data', 'attr': 'data-product-model'},
+                {'type': 'data', 'attr': 'data-item-model'},
+                {'type': 'data', 'attr': 'data-manufacturer-part'},
+                {'type': 'data', 'attr': 'data-mfg-part'},
+                {'type': 'data', 'attr': 'data-oem-part'},
+                {'type': 'data', 'attr': 'data-catalog-number'},
+                
+                # CSS classes - Extended coverage
+                {'type': 'class', 'classes': [
+                    'model', 'model-number', 'model-num', 'modelNumber', 'modelNum',
+                    'part-number', 'part-num', 'partnumber', 'partNumber', 'partNum',
+                    'product-model', 'product-part', 'item-model', 'item-part',
+                    'mpn', 'mfg-part', 'mfg-number', 'manufacturer-part', 'manufacturer-number',
+                    'oem-part', 'oem-number', 'catalog-number', 'catalog-num',
+                    'part-code', 'model-code', 'product-number', 'item-number'
+                ]},
+                
+                # ID selectors - Extended coverage
+                {'type': 'id', 'ids': [
+                    'model', 'model-number', 'model-num', 'modelNumber', 'modelNum',
+                    'part-number', 'part-num', 'partnumber', 'partNumber', 'partNum',
+                    'mpn', 'mfg-part', 'manufacturer-part', 'oem-part', 'catalog-number'
+                ]},
+                
+                # HTML element patterns - More comprehensive
+                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*model[^"]*"[^>]*>([A-Za-z0-9-_\s\.\/]+)</span>'},
+                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*mpn[^"]*"[^>]*>([A-Za-z0-9-_\s\.\/]+)</span>'},
+                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*part[^"]*"[^>]*>([A-Za-z0-9-_\s\.\/]+)</span>'},
+                {'type': 'regex', 'pattern': r'<div[^>]*class="[^"]*model[^"]*"[^>]*>([A-Za-z0-9-_\s\.\/]+)</div>'},
+                {'type': 'regex', 'pattern': r'<div[^>]*class="[^"]*part[^"]*"[^>]*>([A-Za-z0-9-_\s\.\/]+)</div>'},
+                {'type': 'regex', 'pattern': r'<td[^>]*class="[^"]*model[^"]*"[^>]*>([A-Za-z0-9-_\s\.\/]+)</td>'},
+                {'type': 'regex', 'pattern': r'<td[^>]*class="[^"]*part[^"]*"[^>]*>([A-Za-z0-9-_\s\.\/]+)</td>'},
+                
+                # JSON patterns with null handling - Comprehensive coverage
+                {'type': 'regex', 'pattern': r'"model"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"mpn"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"modelNumber"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"model_number"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"modelNum"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"partNumber"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"part_number"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"partNum"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"manufacturerPartNumber"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"manufacturer_part_number"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"mfgPartNumber"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"mfg_part_number"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"oemPartNumber"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"oem_part_number"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"catalogNumber"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"catalog_number"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"productModel"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"product_model"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"itemModel"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                {'type': 'regex', 'pattern': r'"item_model"\s*:\s*(?:null|"(?P<Model_Number>[^"]*)")'},
+                
+                # Text-based patterns - Enhanced with more variations
+                {'type': 'regex', 'pattern': r'model["\s#:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'mpn["\s#:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'part\s*#?\s*:?\s*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'part\s*number["\s#:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'manufacturer\s*part["\s#:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'mfg\s*part["\s#:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'oem\s*part["\s#:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'catalog\s*#?\s*:?\s*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'item\s*model["\s#:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'product\s*model["\s#:]*([A-Za-z0-9-_\s\.\/]+)'},
+                
+                # Label-based patterns - Common e-commerce labels
+                {'type': 'regex', 'pattern': r'Model\s*Number[:\s]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'Part\s*Number[:\s]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'MPN[:\s]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'Manufacturer\s*Part[:\s]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'OEM\s*Part[:\s]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'Catalog\s*Number[:\s]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'Item\s*Model[:\s]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'Product\s*Model[:\s]*([A-Za-z0-9-_\s\.\/]+)'},
+                
+                # Specific e-commerce platform patterns
+                {'type': 'regex', 'pattern': r'PartNumber["\s:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'ModelNumber["\s:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'CatalogNumber["\s:]*([A-Za-z0-9-_\s\.\/]+)'},
+                {'type': 'regex', 'pattern': r'ManufacturerPartNumber["\s:]*([A-Za-z0-9-_\s\.\/]+)'},
             ],
             'Product_Code': [
-                # Meta tags
+                # Meta tags - GTIN/UPC only
                 {'type': 'meta', 'attrs': {'itemprop': 'gtin'}, 'attr': 'content'},
                 {'type': 'meta', 'attrs': {'itemprop': 'gtin8'}, 'attr': 'content'},
                 {'type': 'meta', 'attrs': {'itemprop': 'gtin12'}, 'attr': 'content'},
@@ -3603,36 +3750,30 @@ if result:
                 {'type': 'meta', 'attrs': {'itemprop': 'gtin14'}, 'attr': 'content'},
                 {'type': 'meta', 'attrs': {'name': 'upc'}, 'attr': 'content'},
                 {'type': 'meta', 'attrs': {'name': 'gtin'}, 'attr': 'content'},
-                {'type': 'meta', 'attrs': {'name': 'barcode'}, 'attr': 'content'},
-                # Data attributes
-                {'type': 'data', 'attr': 'data-product-id'},
-                {'type': 'data', 'attr': 'data-product-code'},
-                {'type': 'data', 'attr': 'data-item-id'},
-                {'type': 'data', 'attr': 'data-id'},
+                # Data attributes - GTIN/UPC only
                 {'type': 'data', 'attr': 'data-upc'},
                 {'type': 'data', 'attr': 'data-gtin'},
-                {'type': 'data', 'attr': 'data-barcode'},
                 {'type': 'data', 'attr': 'data-ean'},
-                # CSS classes
-                {'type': 'class', 'classes': ['product-code', 'item-code', 'product-id', 'item-id', 'upc', 'gtin', 'barcode', 'ean', 'product-barcode', 'item-barcode']},
-                # ID selectors
-                {'type': 'id', 'ids': ['product-code', 'item-code', 'product-id', 'upc', 'gtin', 'barcode', 'ean']},
-                # Regex patterns
-                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*product[_-]?code[^"]*"[^>]*>([A-Za-z0-9-_]+)</span>'},
-                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*upc[^"]*"[^>]*>([A-Za-z0-9-_]+)</span>'},
-                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*gtin[^"]*"[^>]*>([A-Za-z0-9-_]+)</span>'},
-                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*barcode[^"]*"[^>]*>([A-Za-z0-9-_]+)</span>'},
-                {'type': 'regex', 'pattern': r'"productCode"\s*:\s*"([A-Za-z0-9-_]+)"'},
-                {'type': 'regex', 'pattern': r'"product_code"\s*:\s*"([A-Za-z0-9-_]+)"'},
-                {'type': 'regex', 'pattern': r'"upc"\s*:\s*"([A-Za-z0-9-_]+)"'},
-                {'type': 'regex', 'pattern': r'"gtin"\s*:\s*"([A-Za-z0-9-_]+)"'},
-                {'type': 'regex', 'pattern': r'"barcode"\s*:\s*"([A-Za-z0-9-_]+)"'},
-                {'type': 'regex', 'pattern': r'"ean"\s*:\s*"([A-Za-z0-9-_]+)"'},
-                {'type': 'regex', 'pattern': r'product[_-]?code["\s:]*([A-Za-z0-9-_]+)'},
-                {'type': 'regex', 'pattern': r'upc["\s#:]*([A-Za-z0-9-_]+)'},
-                {'type': 'regex', 'pattern': r'gtin["\s#:]*([A-Za-z0-9-_]+)'},
-                {'type': 'regex', 'pattern': r'barcode["\s#:]*([A-Za-z0-9-_]+)'},
-                {'type': 'regex', 'pattern': r'ean["\s#:]*([A-Za-z0-9-_]+)'},
+                # CSS classes - GTIN/UPC specific
+                {'type': 'class', 'classes': ['upc', 'gtin', 'ean', 'product-upc', 'product-gtin', 'product-ean']},
+                # ID selectors - GTIN/UPC specific
+                {'type': 'id', 'ids': ['upc', 'gtin', 'ean', 'product-upc', 'product-gtin']},
+                # Regex patterns - GTIN/UPC format only (8, 12, 13, or 14 digits)
+                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*upc[^"]*"[^>]*>(\d{8}|\d{12}|\d{13}|\d{14})</span>'},
+                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*gtin[^"]*"[^>]*>(\d{8}|\d{12}|\d{13}|\d{14})</span>'},
+                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*ean[^"]*"[^>]*>(\d{8}|\d{12}|\d{13}|\d{14})</span>'},
+                {'type': 'regex', 'pattern': r'"upc"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
+                {'type': 'regex', 'pattern': r'"gtin"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
+                {'type': 'regex', 'pattern': r'"ean"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
+                {'type': 'regex', 'pattern': r'upc["\s#:]*(\d{8}|\d{12}|\d{13}|\d{14})'},
+                {'type': 'regex', 'pattern': r'gtin["\s#:]*(\d{8}|\d{12}|\d{13}|\d{14})'},
+                {'type': 'regex', 'pattern': r'ean["\s#:]*(\d{8}|\d{12}|\d{13}|\d{14})'},
+                # Barcode patterns that might contain GTIN/UPC
+                {'type': 'regex', 'pattern': r'"barcode"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
+                {'type': 'regex', 'pattern': r'barcode["\s#:]*(\d{8}|\d{12}|\d{13}|\d{14})'},
+                # Generic product code patterns that match GTIN/UPC format
+                {'type': 'regex', 'pattern': r'"productCode"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
+                {'type': 'regex', 'pattern': r'"product_code"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
             ]
         }
         
@@ -3665,6 +3806,12 @@ if result:
         print_highlight("INTERACTIVE PATTERN SELECTION")
         print("="*80)
         print_info("Multiple patterns found for various fields. Please select your preferred pattern:")
+        print()
+        print_warning("IMPORTANT:")
+        print_warning("   • Product_Code only accepts valid GTIN/UPC formats (8, 12, 13, or 14 digits)")
+        print_warning("   • Model_Number accepts: part numbers, MPNs, model numbers, catalog numbers, OEM parts")
+        print_warning("   • Model_Number supports: letters, numbers, hyphens, slashes, parentheses (including null)")
+        print_warning("   • JSON-LD patterns capture fields even when current product has null values")
         print()
         
         for field_name in ['Product_Title', 'Product_Price', 'Brand', 'Manufacturer', 'Sku', 'Model_Number', 'Product_Code']:
@@ -3764,7 +3911,13 @@ if result:
                 'Brand': ['brand', 'brandName', 'brand_name', 'manufacturer'],
                 'Manufacturer': ['manufacturer', 'maker', 'brand', 'mfg', 'mfr'],
                 'Sku': ['sku', 'itemNumber', 'item_number', 'productNumber', 'product_number', 'productId', 'product_id'],
-                'Model_Number': ['modelNumber', 'model_number', 'mpn', 'partNumber', 'part_number'],
+                'Model_Number': [
+                    'modelNumber', 'model_number', 'modelNum', 'model',
+                    'mpn', 'partNumber', 'part_number', 'partNum', 'part',
+                    'manufacturerPartNumber', 'manufacturer_part_number', 'mfgPartNumber', 'mfg_part_number',
+                    'oemPartNumber', 'oem_part_number', 'catalogNumber', 'catalog_number',
+                    'productModel', 'product_model', 'itemModel', 'item_model'
+                ],
                 'Product_Code': ['upc', 'gtin', 'barcode', 'productCode', 'product_code', 'ean']
             }
             
@@ -3782,16 +3935,16 @@ if result:
                             continue  # Already found
                         
                         for key in field_keys:
-                            # Pattern 1: JSON-style "key": "value"
-                            pattern1 = f'"{key}"\\s*:\\s*"([^"]+)"'
+                            # Pattern 1: JSON-style "key": "value" OR "key": null
+                            pattern1 = f'"{key}"\\s*:\\s*(?:null|"([^"]*)")'
                             match1 = re.search(pattern1, script_content, re.IGNORECASE)
                             
-                            # Pattern 2: JavaScript variable assignment: key = "value"
-                            pattern2 = f'{key}\\s*[=:]\\s*["\']([^"\']+)["\']'
+                            # Pattern 2: JavaScript variable assignment: key = "value" OR key = null  
+                            pattern2 = f'{key}\\s*[=:]\\s*(?:null|["\']([^"\']*)["\'])'
                             match2 = re.search(pattern2, script_content, re.IGNORECASE)
                             
-                            # Pattern 3: Object property: {key: "value"}
-                            pattern3 = f'{key}\\s*:\\s*["\']([^"\']+)["\']'
+                            # Pattern 3: Object property: {key: "value"} OR {key: null}
+                            pattern3 = f'{key}\\s*:\\s*(?:null|["\']([^"\']*)["\'])'
                             match3 = re.search(pattern3, script_content, re.IGNORECASE)
                             
                             if match1:
@@ -3820,7 +3973,7 @@ if result:
                                 break
             
             if patterns:
-                print(f"📜 Found {len(patterns)} field patterns in script tags")
+                print(f"Found {len(patterns)} field patterns in script tags")
         except Exception as e:
             print(f"Script tag extraction failed: {e}")
         return patterns
@@ -3841,12 +3994,12 @@ if result:
                     # Handle different JSON-LD structures
                     if isinstance(data, list):
                         for item in data:
-                            item_patterns = self._extract_from_json_ld_item(item)
+                            item_patterns = self._extract_from_json_ld_item(item, html)
                             for field, pattern_data in item_patterns.items():
                                 if field not in patterns:  # Only add if not already found
                                     patterns[field] = pattern_data
                     elif isinstance(data, dict):
-                        item_patterns = self._extract_from_json_ld_item(data)
+                        item_patterns = self._extract_from_json_ld_item(data, html)
                         for field, pattern_data in item_patterns.items():
                             if field not in patterns:  # Only add if not already found
                                 patterns[field] = pattern_data
@@ -3858,7 +4011,7 @@ if result:
             print(f"JSON-LD extraction failed: {e}")
         return patterns
     
-    def _extract_from_json_ld_item(self, data: Dict) -> Dict[str, Dict]:
+    def _extract_from_json_ld_item(self, data: Dict, html: str = '') -> Dict[str, Dict]:
         """Extract product fields from a single JSON-LD item"""
         patterns = {}
         
@@ -3884,7 +4037,22 @@ if result:
             'mpn': 'Model_Number',
             'partNumber': 'Model_Number',
             'part_number': 'Model_Number',
+            'partNum': 'Model_Number',
             'manufacturerPartNumber': 'Model_Number',
+            'manufacturer_part_number': 'Model_Number',
+            'mfgPartNumber': 'Model_Number',
+            'mfg_part_number': 'Model_Number',
+            'oemPartNumber': 'Model_Number',
+            'oem_part_number': 'Model_Number',
+            'catalogNumber': 'Model_Number',
+            'catalog_number': 'Model_Number',
+            'modelNumber': 'Model_Number',
+            'model_number': 'Model_Number',
+            'modelNum': 'Model_Number',
+            'productModel': 'Model_Number',
+            'product_model': 'Model_Number',
+            'itemModel': 'Model_Number',
+            'item_model': 'Model_Number',
             'productID': 'Product_Code',
             'product_id': 'Product_Code',
             'identifier': 'Product_Code',
@@ -3900,36 +4068,48 @@ if result:
         
         for json_field, our_field in field_mapping.items():
             value = data.get(json_field)
-            if value:
-                if isinstance(value, dict) and 'name' in value:
-                    value = value['name']  # Extract from nested objects
-                elif isinstance(value, str):
-                    pass  # Use as is
-                else:
-                    continue
+            
+            # Always check if the field exists in JSON-LD, even if null
+            if json_field in data:
+                actual_value = value
+                example_value = "null"
                 
-                # Create patterns for both simple and nested JSON structures
+                # Process non-null values
+                if value:
+                    if isinstance(value, dict) and 'name' in value:
+                        actual_value = value['name']  # Extract from nested objects
+                        example_value = str(actual_value)
+                    elif isinstance(value, str):
+                        actual_value = value
+                        example_value = str(actual_value)
+                    else:
+                        # For other types, convert to string
+                        actual_value = str(value)
+                        example_value = actual_value
+                
+                # Create patterns that handle both null and actual values
                 test_patterns = []
                 
-                # Pattern 1: Simple string value "field":"value"
-                test_patterns.append(f'"{json_field}"\\s*:\\s*"(?P<{our_field}>[^"]+)"')
+                # Pattern 1: Handle both null and string values "field":null OR "field":"value"
+                test_patterns.append(f'"{json_field}"\\s*:\\s*(?:null|"(?P<{our_field}>[^"]*)")') 
                 
                 # Pattern 2: Nested object with name "field":{"@type":"...","name":"value"}
                 if json_field in ['brand', 'manufacturer']:
                     test_patterns.append(f'"{json_field}"\\s*:\\s*{{[^}}]*"name"\\s*:\\s*"(?P<{our_field}>[^"]+)"[^}}]*}}')
                 
-                test_html = self.analysis_results.get('sample_pages', {}).get('product', {}).get('html', '')
+                test_html = html
                 
                 for test_pattern in test_patterns:
                     if self._test_regex_pattern(test_pattern, test_html, our_field):
                         patterns[our_field] = {
                             'regex': test_pattern,
-                            'example_value': unescape(str(value)),
+                            'example_value': unescape(str(example_value)),
                             'method': 'json_ld_structured_data'
                         }
+                        print_info(f"JSON-LD pattern captured for {our_field}: {json_field} (value: {example_value})")
                         break
                 else:
-                    print(f"JSON-LD patterns for {our_field} failed validation test")
+                    print_warning(f"JSON-LD pattern for {our_field} ({json_field}) found but failed validation test")
         # Handle price from offers
         offers = data.get('offers', data.get('offer'))
         if offers:
@@ -3943,7 +4123,7 @@ if result:
             if offer and 'price' in offer:
                 price = offer['price']
                 test_pattern = r'"price"\\s*:\\s*"?(?P<Product_Price>[\\d,]+\\.?\\d*)"?'
-                test_html = self.analysis_results.get('sample_pages', {}).get('product', {}).get('html', '')
+                test_html = html
                 
                 if self._test_regex_pattern(test_pattern, test_html, 'Product_Price'):
                     patterns['Product_Price'] = {
@@ -4085,6 +4265,10 @@ if result:
     
     def _is_valid_field_value(self, field_name: str, value: str) -> bool:
         """Validate if extracted value is reasonable for the field"""
+        # Special handling for Model_Number - allow empty/null values
+        if field_name == 'Model_Number' and not value:
+            return True
+        
         if not value:
             return False
             
@@ -4128,7 +4312,42 @@ if result:
                 return False
             return True
             
-        elif field_name in ['Sku', 'Model_Number', 'Product_Code']:
+        elif field_name == 'Product_Code':
+            # Product_Code must be a valid GTIN/UPC format
+            return self._validate_gtin_upc(value_clean)
+            
+        elif field_name == 'Model_Number':
+            # Model_Number is very permissive - can be null, part numbers, MPNs, etc.
+            # Allow null or empty values
+            if not value_clean or value_clean.lower() in ['null', 'none', 'n/a', 'not available', 'tbd', 'tba']:
+                return True
+            # Should be reasonable alphanumeric with common separators and special chars
+            # Allow letters, numbers, hyphens, underscores, dots, slashes, parentheses, colons, spaces
+            if not re.match(r'^[A-Za-z0-9\-_#\s\./\(\)\[\]&+*@:]+$', value_clean):
+                return False
+            # Should not be too long (part numbers can be quite long)
+            if len(value_clean) > 150:
+                return False
+            # Should not be obviously invalid content
+            invalid_keywords = [
+                'description', 'title', 'buy', 'add', 'cart', 'click', 'more', 'select',
+                'choose', 'option', 'view', 'details', 'information', 'shipping', 'delivery',
+                'warranty', 'return', 'policy', 'terms', 'condition', 'brand new', 'used',
+                'refurbished', 'genuine', 'original', 'replacement'
+            ]
+            # Should not start with http or contain obvious non-part-number text
+            if (value_clean.lower().startswith('http') or 
+                any(word in value_clean.lower() for word in invalid_keywords)):
+                return False
+            # Reject if it's just numbers (likely a price or quantity, not a model number)
+            if re.match(r'^\d+\.?\d*$', value_clean.strip()):
+                return False
+            # Must contain at least one letter or be a reasonable part number format
+            if not re.search(r'[A-Za-z]', value_clean) and len(value_clean) < 3:
+                return False
+            return True
+            
+        elif field_name == 'Sku':
             # Should be alphanumeric with common separators
             if not re.match(r'^[A-Za-z0-9\-_#\s\.]+$', value_clean):
                 return False
@@ -4693,7 +4912,7 @@ if result:
             
             # Try to generate patterns from user-provided HTML elements
             print("\n" + "="*60)
-            print("🔧 FALLBACK: Manual Pattern Generation")
+            print("FALLBACK: Manual Pattern Generation")
             print("="*60)
             print("Since no product patterns were automatically detected, we can help you create patterns manually.")
             print("Please paste an HTML element from a product listing page that represents a single product.")
@@ -4733,20 +4952,20 @@ if result:
                 return {}
                 
             # Generate patterns from the provided HTML
-            print("\n🤖 Generating patterns from your HTML element...")
+            print("\nGenerating patterns from your HTML element...")
             generated_patterns = self._generate_patterns_from_html(user_html)
             
             if generated_patterns:
                 self.analysis_results['product_patterns'] = generated_patterns
-                print(f"✅ Generated {len(generated_patterns)} product pattern(s)")
+                print(f"[SUCCESS] Generated {len(generated_patterns)} product pattern(s)")
                 
                 # Also try to extract field patterns from the same HTML
                 field_patterns = self._extract_field_patterns_from_html(user_html)
                 if field_patterns:
                     self.analysis_results['field_patterns'] = field_patterns
-                    print(f"✅ Generated field patterns for: {', '.join(field_patterns.keys())}")
+                    print(f"[SUCCESS] Generated field patterns for: {', '.join(field_patterns.keys())}")
             else:
-                print("❌ Could not generate patterns from the provided HTML.")
+                print("[ERROR] Could not generate patterns from the provided HTML.")
                 return {}
         
         if not self.analysis_results['product_patterns']:
@@ -4946,7 +5165,7 @@ if result:
         site_info = self.analysis_results.get('site_info', {})
         if site_info:
             report.extend([
-                "📊 Site Information:",
+                "Site Information:",
                 f"  Title: {site_info.get('title', 'N/A')}",
                 f"  Platform: {', '.join(site_info.get('platform_indicators', ['Unknown']))}",
                 f"  Catalog Links Found: {len(site_info.get('potential_catalog_links', []))}",
@@ -4978,7 +5197,7 @@ if result:
                     report.append(f"      {pattern.get('explanation', 'No explanation')}")
             
             if traditional_patterns:
-                report.append("  📊 Traditional Patterns:")
+                report.append("  Traditional Patterns:")
                 for pattern in traditional_patterns:
                     report.append(f"    - {pattern.get('pattern', 'Unknown')}: {pattern.get('count', 0)} links")
                     report.append(f"      Selector: {pattern.get('selector', 'N/A')}")
@@ -5021,7 +5240,7 @@ if result:
                     report.append(f"    - {field}: {example_display}")
             
             if traditional_fields:
-                report.append("  📊 Traditional Methods:")
+                report.append("  Traditional Methods:")
                 for field, info in traditional_fields.items():
                     example_value = info.get('example_value') or 'N/A'
                     if isinstance(example_value, str) and len(example_value) > 30:
@@ -5095,7 +5314,7 @@ def main():
     )
     
     # Run analysis
-    print(f"\n📊 Analyzing: {url}")
+    print(f"\nAnalyzing: {url}")
     print("=" * 60)
     
     try:
