@@ -275,20 +275,20 @@ class UniversalWebsiteAnalyzer:
             'errors': []
         }
     
-    def _setup_openai(self):
-        """Setup OpenAI client with API key"""
-        try:
-            load_dotenv()  # loads .env if present
-            api_key = os.getenv("OPENAI_API_KEY")
-            if not api_key:
-                raise RuntimeError("OPENAI_API_KEY is not set")
+def _setup_openai(self):
+    """Setup OpenAI client with API key"""
+    try:
+        load_dotenv()  # loads .env if present
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("OPENAI_API_KEY is not set")
 
-            self.openai_client = openai.OpenAI(api_key=api_key)
-            self.openai_model = "gpt-4o"  # keep your chosen model
-            print_success("SUCCESS: OpenAI AI-POWERED analysis enabled (GPT-4o)")
-        except Exception as e:
-            print_warning(f"WARNING: OpenAI setup failed: {e}")
-            self.use_ai = False
+        self.openai_client = openai.OpenAI(api_key=api_key)
+        self.openai_model = "gpt-4o"  # keep your chosen model
+        print_success("SUCCESS: OpenAI AI-POWERED analysis enabled (GPT-4o)")
+    except Exception as e:
+        print_warning(f"WARNING: OpenAI setup failed: {e}")
+        self.use_ai = False
 
     def _extract_site_name(self, domain: str) -> str:
         """Extract clean site name from domain (remove www, .com, etc.)"""
@@ -4075,14 +4075,14 @@ if result:
                 example_value = "null"
                 
                 # Process non-null values
-                if value:
-                    if isinstance(value, dict) and 'name' in value:
+            if value:
+                if isinstance(value, dict) and 'name' in value:
                         actual_value = value['name']  # Extract from nested objects
                         example_value = str(actual_value)
-                    elif isinstance(value, str):
+                elif isinstance(value, str):
                         actual_value = value
                         example_value = str(actual_value)
-                    else:
+                else:
                         # For other types, convert to string
                         actual_value = str(value)
                         example_value = actual_value
