@@ -1,0 +1,11 @@
+﻿*
+!.gitignore
+!/async_url_processor.py
+!/simple_url_validator.py
+!/validate.py
+!/universal_website_analyzer.py
+!/README.md
+!/requirements.txt
+!/env.template
+!/LICENSE
+/.env
