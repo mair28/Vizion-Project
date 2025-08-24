@@ -172,6 +172,25 @@ class UniversalWebsiteAnalyzer:
         # Always use proxies (Webshare rotating proxy only)
         self.use_proxies = use_proxies
         
+        # Load proxies - Webshare rotating proxy only
+        self.proxies = []
+        self.proxy_fallback_available = False
+        if use_proxies:
+            # Add Webshare rotating proxy as the only proxy
+            self.proxies.append(self.webshare_proxy)
+            print_info("Using Webshare rotating proxy")
+            # Enable fallback to direct connection if proxy fails
+            self.proxy_fallback_available = True
+        
+        # Browser headers rotation
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+        ]
+        
         # Initialize approach memory
         self.approach_memory = ApproachMemory()
         self.deep_analysis = deep_analysis
@@ -244,51 +263,21 @@ class UniversalWebsiteAnalyzer:
             gtin_pattern = r'(\d{8}|\d{12}|\d{13}|\d{14})'
             return base_pattern.replace(r'([A-Za-z0-9-_]+)', gtin_pattern).replace(r'([A-Za-z0-9-_\s\.]+)', gtin_pattern)
         return base_pattern
-        
-        # Load proxies - Webshare rotating proxy only
-        self.proxies = []
-        self.proxy_fallback_available = False
-        if use_proxies:
-            # Add Webshare rotating proxy as the only proxy
-            self.proxies.append(self.webshare_proxy)
-            print_info("Using Webshare rotating proxy")
-            # Enable fallback to direct connection if proxy fails
-            self.proxy_fallback_available = True
-        
-        # Browser headers rotation
-        self.user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
-        ]
-        
-        # Analysis results storage
-        self.analysis_results = {
-            'site_info': {},
-            'protection_detected': [],
-            'product_patterns': [],
-            'field_patterns': {},
-            'recommended_config': {},
-            'sample_pages': {},
-            'errors': []
-        }
     
-def _setup_openai(self):
-    """Setup OpenAI client with API key"""
-    try:
-        load_dotenv()  # loads .env if present
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError("OPENAI_API_KEY is not set")
+    def _setup_openai(self):
+        """Setup OpenAI client with API key"""
+        try:
+            load_dotenv()  # loads .env if present
+            api_key = os.getenv("OPENAI_API_KEY")
+            if not api_key:
+                raise RuntimeError("OPENAI_API_KEY is not set")
 
-        self.openai_client = openai.OpenAI(api_key=api_key)
-        self.openai_model = "gpt-4o"  # keep your chosen model
-        print_success("SUCCESS: OpenAI AI-POWERED analysis enabled (GPT-4o)")
-    except Exception as e:
-        print_warning(f"WARNING: OpenAI setup failed: {e}")
-        self.use_ai = False
+            self.openai_client = openai.OpenAI(api_key=api_key)
+            self.openai_model = "gpt-4o"  # keep your chosen model
+            print_success("SUCCESS: OpenAI AI-POWERED analysis enabled (GPT-4o)")
+        except Exception as e:
+            print_warning(f"WARNING: OpenAI setup failed: {e}")
+            self.use_ai = False
 
     def _extract_site_name(self, domain: str) -> str:
         """Extract clean site name from domain (remove www, .com, etc.)"""
@@ -4395,6 +4384,40 @@ if result:
             if not self._show_field_fixing_menu(config, validation_results):
                 break  # User chose to exit
     
+    def _display_validation_output(self, output: str):
+        """Display validation output with proper colorama formatting"""
+        lines = output.split('\n')
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Color SUCCESS messages
+            if '[SUCCESS]' in line or 'SUCCESS with' in line or 'completed successfully' in line or 'matched:' in line:
+                print_success(line)
+            # Color FAILED/ERROR messages
+            elif '[FAILED]' in line or 'FAILED' in line or 'ERROR:' in line or 'failed:' in line or 'did not match' in line:
+                print_error(line)
+            # Color WARNING messages  
+            elif '[WARNING]' in line or 'WARNING:' in line or 'has no regex' in line or 'skipping' in line:
+                print_warning(line)
+            # Color INFO messages (=== headers, method indicators, etc.)
+            elif line.startswith('===') or 'VALIDATION' in line or 'validation' in line or 'Running validation with' in line:
+                print_info(line)
+            # Color Running/Testing messages
+            elif 'Running:' in line or 'Testing' in line or 'Approach:' in line or 'Using remembered' in line:
+                print_highlight(line)
+            # Color TIP messages
+            elif 'TIP:' in line:
+                print_info(line)
+            # Color field-specific messages (Field X has no regex)
+            elif line.startswith('Field ') and ('has no regex' in line or 'skipping' in line):
+                print_warning(line)
+            # Default to normal print for other lines
+            else:
+                print(line)
+    
     def _run_validate_py(self, config_file: str) -> Dict[str, any]:
         """Run validate.py and capture results"""
         try:
@@ -4428,11 +4451,11 @@ if result:
             
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=90, cwd=current_dir)
             
-            # Show both stdout and stderr to user
+            # Show both stdout and stderr to user with colorama formatting
             if result.stdout:
-                print(result.stdout)
+                self._display_validation_output(result.stdout)
             if result.stderr:
-                print(f"Error output: {result.stderr}")
+                print_error(f"Error output: {result.stderr}")
             
             if result.returncode == 0:
                 # Parse the output to extract validation results
