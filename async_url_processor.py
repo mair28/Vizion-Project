@@ -14,7 +14,7 @@ import os
 import subprocess
 from datetime import datetime
 from urllib.parse import urlparse
-from typing import Dict, Optional
+from typing import Dict, Optional, List
 
 try:
     from playwright.async_api import async_playwright
@@ -85,6 +85,8 @@ class AsyncURLProcessor:
             'Accept-Language': 'en-US,en;q=0.9',
             'Connection': 'keep-alive'
         }
+        
+
         
         # Initialize approach memory (separate from analyzer/validate)
         self.approach_memory = ApproachMemory('async_processor_memory.json')
@@ -162,6 +164,54 @@ class AsyncURLProcessor:
         # Apply the domain-specific delay
         domain_delay = self.domain_delays.get(domain, self.base_delay)
         await asyncio.sleep(domain_delay + random.uniform(0, 0.2))
+    
+    def deduplicate_parent_child_urls(self, urls: List[str]) -> List[str]:
+        """
+        Remove child URLs when parent URLs exist to avoid duplicate processing.
+        Only applies to meaningful category hierarchies, not homepage elimination.
+        """
+        if not urls:
+            return urls
+        
+        # Normalize URLs - remove trailing slashes and fragments for comparison
+        normalized_urls = []
+        for url in urls:
+            # Remove trailing slashes and fragments (#)
+            clean_url = url.rstrip('/').split('#')[0].split('?')[0]
+            normalized_urls.append((clean_url, url))  # (normalized, original)
+        
+        # Sort by URL length (shortest first) so parents come before children
+        normalized_urls.sort(key=lambda x: len(x[0]))
+        
+        # Keep track of URLs to keep
+        urls_to_keep = []
+        excluded_urls = set()
+        
+        for normalized_url, original_url in normalized_urls:
+            # Skip if this URL was already marked as a child of a parent
+            if normalized_url in excluded_urls:
+                continue
+                
+            # Add this URL to keep list
+            urls_to_keep.append(original_url)
+            
+            # Only exclude children if the parent has meaningful depth (not just homepage)
+            # Count path segments to determine if this is a meaningful parent
+            path_segments = len([seg for seg in normalized_url.split('/')[3:] if seg])  # Skip protocol and domain
+            
+            # Only apply parent-child logic if parent has at least 1 path segment
+            # This prevents homepage from eliminating category pages
+            if path_segments >= 1:
+                # Mark all URLs that start with this URL as children (exclude them)
+                for other_normalized, other_original in normalized_urls:
+                    if (other_normalized != normalized_url and 
+                        other_normalized.startswith(normalized_url + '/') and
+                        other_normalized not in excluded_urls):
+                        excluded_urls.add(other_normalized)
+        
+        return urls_to_keep
+    
+
     
     async def validate_single_url(self, session, semaphore, url):
         """Validate a single URL with smart approach selection"""
@@ -885,6 +935,31 @@ class AsyncURLProcessor:
                     if errors > 0:
                         print(f"     {domain}: {errors} errors")
         
+        # Apply deduplication to VALID URLs only (after validation)
+        if self.valid_urls:
+            print(f"\n🔧 Applying parent/child deduplication to {len(self.valid_urls)} valid URLs...")
+            valid_url_list = [url_data['url'] for url_data in self.valid_urls]
+            deduplicated_valid_urls = self.deduplicate_parent_child_urls(valid_url_list)
+            
+            # Filter valid_urls to keep only deduplicated ones
+            deduplicated_data = []
+            for url in deduplicated_valid_urls:
+                for url_data in self.valid_urls:
+                    if url_data['url'] == url:
+                        deduplicated_data.append(url_data)
+                        break
+            
+            removed_count = len(self.valid_urls) - len(deduplicated_data)
+            if removed_count > 0:
+                print(f"🔧 Removed {removed_count} child URLs from valid results to avoid duplicates")
+                print(f"📊 Final valid URLs after deduplication: {len(deduplicated_data)}")
+                
+                # Update results with deduplicated valid URLs
+                self.valid_urls = deduplicated_data
+                self.valid_count = len(deduplicated_data)
+            else:
+                print("📊 No duplicate parent/child URLs found in valid results")
+
         # Save final results
         final_file = self.save_progress()
         print(f"✅ Final results saved to: {final_file}")
