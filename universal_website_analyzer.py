@@ -2800,7 +2800,11 @@ if result:
                 for ai_pattern in ai_patterns['product_link_patterns']:
                     # Test the AI-generated selector
                     original_selector = ai_pattern['selector']
-                    actual_count = self._test_selector_on_page(original_selector, html)
+                    actual_count, sample_urls = self._test_selector_with_samples(original_selector, html, self.base_url)
+                    if sample_urls and actual_count > 0:
+                        print(f"Sample URLs found for AI pattern '{original_selector}':")
+                        for i, url in enumerate(sample_urls, 1):
+                            print(f"  {i}. {url}")
                     # If original selector fails, try fallback patterns
                     if actual_count == 0:
                         # Try without leading/trailing slashes (common issue)
@@ -2813,10 +2817,15 @@ if result:
                             fallback_selectors.append(original_selector.replace('/p/', 'p'))
                         
                         for fallback in fallback_selectors:
-                            fallback_count = self._test_selector_on_page(fallback, html)
+                            fallback_count, fallback_samples = self._test_selector_with_samples(fallback, html, self.base_url)
                             if fallback_count > actual_count:
                                 actual_count = fallback_count
+                                sample_urls = fallback_samples
                                 ai_pattern['selector'] = fallback  # Update the selector
+                                if sample_urls:
+                                    print(f"Sample URLs found for fallback pattern '{fallback}':")
+                                    for i, url in enumerate(sample_urls, 1):
+                                        print(f"  {i}. {url}")
                                 break
                     
                     if actual_count > 0:
@@ -2893,6 +2902,47 @@ if result:
         if hyphenated_product_links:
             pattern_groups['hyphenated-slugs'] = hyphenated_product_links
         
+        # Check for product code patterns in the last path segment (e.g., /1049-0001s, /ABC-123, /en-us/1049-0001s)
+        product_code_links = []
+        for link in all_links:
+            href = link.get('href', '')
+            if href:
+                # Extract the last meaningful path segment
+                # Examples: /en-us/1049-0001s -> 1049-0001s, /1049-0001s -> 1049-0001s
+                import re
+                path_segments = [seg for seg in href.strip('/').split('/') if seg]
+                if path_segments:
+                    last_segment = path_segments[-1]
+                    
+                    # Check if last segment looks like a product code
+                    # Pattern: contains hyphens and numbers/letters, like "1049-0001s", "ABC-123"
+                    product_code_pattern = r'^[A-Za-z0-9]+-[A-Za-z0-9\-]+[A-Za-z0-9s]*$'
+                    if re.match(product_code_pattern, last_segment):
+                        # Additional validation: should contain numbers or be reasonably short
+                        if (any(c.isdigit() for c in last_segment) or len(last_segment) <= 15) and last_segment.count('-') >= 1:
+                            text = link.get_text(strip=True)
+                            if text and len(text) < 300:  # Reasonable title length
+                                # Determine if it has a locale prefix
+                                locale = None
+                                if len(path_segments) >= 2:
+                                    potential_locale = path_segments[-2]
+                                    if re.match(r'^[a-z]{2}(-[a-z]{2})?$', potential_locale):
+                                        locale = potential_locale
+                                
+                                product_code_links.append({
+                                    'href': href,
+                                    'text': text,
+                                    'classes': link.get('class', []),
+                                    'parent_tag': link.parent.name if link.parent else None,
+                                    'parent_classes': link.parent.get('class', []) if link.parent else [],
+                                    'full_link_html': str(link),
+                                    'locale': locale,
+                                    'product_code': last_segment
+                                })
+        
+        if product_code_links:
+            pattern_groups['locale-product-codes'] = product_code_links
+        
         for link in all_links:
             href = link.get('href', '')
             text = link.get_text(strip=True)
@@ -2948,8 +2998,12 @@ if result:
                 selector = self._generate_css_selector(pattern_key, links)
                 confidence = self._calculate_pattern_confidence(pattern_key, links)
                 
-                # Test the selector on the actual page to get real count
-                actual_count = self._test_selector_on_page(selector, html)
+                # Test the selector on the actual page to get real count and samples
+                actual_count, sample_urls = self._test_selector_with_samples(selector, html, self.base_url)
+                if sample_urls and actual_count > 0:
+                    print(f"Sample URLs found for pattern '{pattern_key}':")
+                    for i, url in enumerate(sample_urls, 1):
+                        print(f"  {i}. {url}")
                 
                 patterns.append({
                     'pattern': pattern_key,
@@ -3044,8 +3098,12 @@ if result:
                 else:
                     continue
                 
-                # Test the selector on the actual page to get real count
-                actual_count = self._test_selector_on_page(selector, html)
+                # Test the selector on the actual page to get real count and samples
+                actual_count, sample_urls = self._test_selector_with_samples(selector, html, self.base_url)
+                if sample_urls and actual_count > 0:
+                    print(f"Sample URLs found for pattern '{pattern_type}':")
+                    for i, url in enumerate(sample_urls, 1):
+                        print(f"  {i}. {url}")
                 
                 patterns.append({
                     'pattern': pattern_type,
@@ -3124,6 +3182,32 @@ if result:
             print(f"Selector test failed for '{selector}': {e}")
             return 0
     
+    def _test_selector_with_samples(self, selector: str, html: str, base_url: str = "") -> tuple:
+        """Test a CSS selector and return count + sample URLs"""
+        try:
+            soup = BeautifulSoup(html, 'html.parser')
+            elements = soup.select(selector)
+            count = len(elements)
+            
+            # Extract sample URLs (up to 3)
+            sample_urls = []
+            for element in elements[:3]:
+                href = element.get('href', '')
+                if href:
+                    # Convert relative URLs to absolute
+                    if href.startswith('/') and base_url:
+                        full_url = base_url.rstrip('/') + href
+                    elif href.startswith('http'):
+                        full_url = href
+                    else:
+                        full_url = href
+                    sample_urls.append(full_url)
+            
+            return count, sample_urls
+        except Exception as e:
+            print(f"Selector test failed for '{selector}': {e}")
+            return 0, []
+    
     def _convert_to_named_group(self, pattern: str, field_name: str) -> str:
         """Convert any capture group in pattern to named group for specific field"""
         import re
@@ -3159,6 +3243,8 @@ if result:
             return f"Product links on this site have URLs containing '/p/' and often end with '.html'; this selector targets all anchor tags with href attributes starting with '/p/' or containing '/p/' and ending with '.html', effectively selecting product page links without including other non-product links. Found {count} matching links."
         elif '/item/' in pattern_key:
             return f"Product links on this site use '/item/' in their URLs; this selector targets anchor tags containing '/item/' in their href attributes to identify product pages. Found {count} matching links."
+        elif pattern_key == 'locale-product-codes':
+            return f"Product links on this site have hyphenated product codes as the last path segment (e.g., /en-us/1049-0001s, /1049-0001s, /ABC-123); this selector targets anchor tags with href attributes ending in hyphenated product codes, effectively selecting individual product pages. Found {count} matching links."
         else:
             return f"Product links identified by pattern '{pattern_key}' using selector '{selector}'. Found {count} matching links."
     
@@ -3171,6 +3257,26 @@ if result:
         # Handle hyphenated-slugs pattern
         if pattern_key == 'hyphenated-slugs':
             return "a[href^='/'][href*='-'][title]"
+        
+        # Handle locale-product-codes pattern (e.g., /en-us/1049-0001s, /1049-0001s)
+        if pattern_key == 'locale-product-codes':
+            # Generate selector based on the actual product codes found
+            if links:
+                # Look for common patterns in the actual links
+                sample_codes = [link.get('product_code', '') for link in links[:5]]
+                
+                # Check if they have locale prefixes
+                has_locale = any(link.get('locale') for link in links)
+                
+                if has_locale:
+                    # If locale-based, target locale + hyphen pattern
+                    return "a[href*='/en-us/'][href*='-'], a[href*='/es-mx/'][href*='-'], a[href*='/fr/'][href*='-'], a[href*='/de/'][href*='-']"
+                else:
+                    # If no locale, target URLs ending with hyphenated codes
+                    return "a[href*='-'][href$='s'], a[href*='-'][href*='/']"
+            
+            # Fallback selector
+            return "a[href*='-'][href*='/']"
         
         # Handle URL ending patterns
         if pattern_key == '/p_end':
@@ -3394,6 +3500,83 @@ if result:
             # If no HTML provided, add the pattern (trust that it was already validated)
             all_patterns[field].append(pattern_data)
             print(f"Added {field} pattern via {pattern_data.get('method', 'unknown')}: {pattern_data['example_value']}")
+    
+    def _extract_json_field_patterns(self, soup: BeautifulSoup, html: str) -> Dict[str, List[Dict]]:
+        """Extract field patterns from JSON data in script tags (like Redux state, product data)"""
+        import json
+        import re
+        
+        json_patterns = {}
+        
+        # Look for script tags that might contain product data
+        script_tags = soup.find_all('script', type=['application/json', 'application/ld+json'])
+        
+        # Also check script tags with specific IDs that often contain product data
+        for script_id in ['initialReduxState', 'productData', '__NEXT_DATA__', 'gtmProductData']:
+            script_tag = soup.find('script', id=script_id)
+            if script_tag:
+                script_tags.append(script_tag)
+        
+        for script_tag in script_tags:
+            if script_tag and script_tag.string:
+                try:
+                    # Try to parse as JSON
+                    json_data = json.loads(script_tag.string)
+                    json_str = json.dumps(json_data, indent=2)
+                    
+                    # Look for common field patterns in JSON
+                    field_searches = {
+                        'Product_Title': [
+                            (r'"(?:name|title|productName)"\s*:\s*"([^"]+)"', 'name/title field'),
+                            (r'"caption"\s*:\s*"(?:Name|Title)"[^}]*"(?:text|value)"\s*:\s*"([^"]+)"', 'caption-based name')
+                        ],
+                        'Product_Price': [
+                            (r'"(?:price|cost|amount)"\s*:\s*"?([0-9]+\.?[0-9]*)"?', 'price field'),
+                            (r'"caption"\s*:\s*"(?:Price|Cost)"[^}]*"(?:text|value)"\s*:\s*"([^"]+)"', 'caption-based price')
+                        ],
+                        'Sku': [
+                            (r'"(?:sku|itemNumber|productId)"\s*:\s*"([^"]+)"', 'SKU field'),
+                            (r'"caption"\s*:\s*"(?:SKU|Item)"[^}]*"(?:text|value)"\s*:\s*"([^"]+)"', 'caption-based SKU')
+                        ],
+                        'Model_Number': [
+                            (r'"(?:mpn|model|modelNumber|oem)"\s*:\s*"([^"]+)"', 'MPN/model field'),
+                            (r'"caption"\s*:\s*"(?:MPN|Model|OEM|Part)"[^}]*"(?:text|value)"\s*:\s*"([^"]+)"', 'caption-based model')
+                        ],
+
+                        'Brand': [
+                            (r'"(?:brand|manufacturer|brandName)"\s*:\s*"([^"]+)"', 'brand field'),
+                            (r'"caption"\s*:\s*"(?:Brand|Manufacturer)"[^}]*"(?:text|value)"\s*:\s*"([^"]+)"', 'caption-based brand')
+                        ]
+                    }
+                    
+                    for field, patterns in field_searches.items():
+                        if field not in json_patterns:
+                            json_patterns[field] = []
+                        
+                        for pattern, description in patterns:
+                            matches = re.findall(pattern, json_str, re.IGNORECASE)
+                            if matches:
+                                # Take the first non-empty match
+                                example_value = next((m for m in matches if m.strip()), None)
+                                if example_value:
+                                    json_patterns[field].append({
+                                        'regex': pattern,
+                                        'explanation': f'JSON {description} pattern',
+                                        'example_value': example_value,
+                                        'confidence': 0.9,
+                                        'method': 'JSON extraction',
+                                        'source': 'script_tag'
+                                    })
+                
+                except json.JSONDecodeError:
+                    # Not valid JSON, skip
+                    continue
+                except Exception as e:
+                    # Other error, continue to next script tag
+                    continue
+        
+        return json_patterns
+    
     def _extract_field_patterns(self, html: str, soup: BeautifulSoup) -> Dict[str, Dict]:
         """Extract regex patterns for common product fields with AI assistance"""
         # Store multiple patterns per field for user selection
@@ -3406,6 +3589,13 @@ if result:
             'Model_Number': [],
             'Product_Code': []
         }
+        
+        # Check for JSON-based patterns (like Redux state, product data)
+        json_patterns = self._extract_json_field_patterns(soup, html)
+        if json_patterns:
+            for field, patterns in json_patterns.items():
+                if field in all_patterns:
+                    all_patterns[field].extend(patterns)
         
         # First, try AI analysis if available (primary method)
         if self.use_ai:
@@ -3689,6 +3879,7 @@ if result:
                 {'type': 'regex', 'pattern': r'"sku"\s*:\s*"([A-Za-z0-9-_\s\.]+)"'},
                 {'type': 'regex', 'pattern': r'"item_number"\s*:\s*"([A-Za-z0-9-_\s\.]+)"'},
                 {'type': 'regex', 'pattern': r'"product_number"\s*:\s*"([A-Za-z0-9-_\s\.]+)"'},
+                {'type': 'regex', 'pattern': r'"mpn"\s*:\s*"([A-Za-z0-9-_\s\.]+)"'},
                 {'type': 'regex', 'pattern': r'sku["\s:]*([A-Za-z0-9-_\s\.]+)'},
                 {'type': 'regex', 'pattern': r'item\s*#?\s*:?\s*([A-Za-z0-9-_\s\.]+)'},
                 {'type': 'regex', 'pattern': r'item\s*number["\s:]*([A-Za-z0-9-_\s\.]+)'},

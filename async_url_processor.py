@@ -86,6 +86,19 @@ class AsyncURLProcessor:
             'Connection': 'keep-alive'
         }
         
+        # Rotating user agents and headers for better stealth
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        ]
+        
+        self.session_count = 0  # Track session rotations
+        
 
         
         # Initialize approach memory (separate from analyzer/validate)
@@ -164,6 +177,61 @@ class AsyncURLProcessor:
         # Apply the domain-specific delay
         domain_delay = self.domain_delays.get(domain, self.base_delay)
         await asyncio.sleep(domain_delay + random.uniform(0, 0.2))
+    
+    def _get_domain(self, url):
+        """Extract domain from URL"""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            return parsed.netloc.lower()
+        except:
+            return ""
+    
+    def _get_rotating_headers(self, domain=""):
+        """Get rotating headers with different user agents for stealth"""
+        import random
+        
+        # Select user agent based on session count (every 5 URLs)
+        agent_index = (self.session_count // 5) % len(self.user_agents)
+        user_agent = self.user_agents[agent_index]
+        
+        # Base headers with rotating user agent
+        headers = {
+            'User-Agent': user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': random.choice(['en-US,en;q=0.9', 'en-US,en;q=0.8,es;q=0.7', 'en-GB,en;q=0.9']),
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        # Add browser-specific headers
+        if 'Chrome' in user_agent:
+            chrome_version = '120' if '120.0.0.0' in user_agent else '119'
+            headers.update({
+                'sec-ch-ua': f'"Not_A Brand";v="8", "Chromium";v="{chrome_version}", "Google Chrome";v="{chrome_version}"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': random.choice(['"Windows"', '"macOS"', '"Linux"']),
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1'
+            })
+        elif 'Firefox' in user_agent:
+            headers['DNT'] = '1'
+        elif 'Safari' in user_agent and 'Chrome' not in user_agent:
+            headers['Accept'] = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        
+        # Academy.com specific enhancements
+        if 'academy.com' in domain.lower():
+            headers.update({
+                'Cache-Control': random.choice(['no-cache', 'max-age=0']),
+                'Pragma': 'no-cache' if random.random() > 0.5 else None
+            })
+            # Remove None values
+            headers = {k: v for k, v in headers.items() if v is not None}
+        
+        return headers
     
     def deduplicate_parent_child_urls(self, urls: List[str]) -> List[str]:
         """
@@ -382,17 +450,38 @@ class AsyncURLProcessor:
     async def _try_approach(self, session, url, approach):
         """Try a specific approach (simple or proxy)"""
         try:
-            timeout = aiohttp.ClientTimeout(total=45, connect=15)  # Increased from 30/10 to 45/15
+            # Longer timeout for Academy.com due to dynamic content loading
+            domain = self._get_domain(url)
+            if 'academy.com' in domain.lower():
+                timeout = aiohttp.ClientTimeout(total=60, connect=20)  # Extra time for Academy.com
+            else:
+                timeout = aiohttp.ClientTimeout(total=45, connect=15)  # Standard timeout
             
             if approach == 'simple':
-                # Simple approach: direct request
-                async with session.get(url.strip(), headers=self.headers, timeout=timeout) as response:
+                # Simple approach: direct request with rotating headers
+                headers = self._get_rotating_headers(domain)
+                # Increment session count for rotation tracking
+                self.session_count += 1
+                rotation_interval = random.randint(4, 6)  # Randomize rotation between 4-6 URLs
+                if self.session_count % rotation_interval == 1:  # Log rotation
+                    agent_short = headers['User-Agent'].split('/')[-1].split()[0]  # Get browser name
+                    print(f"🔄 Identity rotation #{(self.session_count-1)//5 + 1}: Using {agent_short}")
+                
+                async with session.get(url.strip(), headers=headers, timeout=timeout) as response:
                     return await self._process_response(response, url, approach)
                     
             elif approach == 'proxy':
-                # Proxy approach: use Webshare proxy
+                # Proxy approach: use Webshare proxy with rotating headers
+                headers = self._get_rotating_headers(domain)
+                # Increment session count for rotation tracking
+                self.session_count += 1
+                rotation_interval = random.randint(4, 6)  # Randomize rotation between 4-6 URLs
+                if self.session_count % rotation_interval == 1:  # Log rotation
+                    agent_short = headers['User-Agent'].split('/')[-1].split()[0]  # Get browser name
+                    print(f"🔄 Identity rotation #{(self.session_count-1)//5 + 1}: Using {agent_short} (proxy)")
+                
                 proxy_url = f"http://{self.webshare_proxy['username']}:{self.webshare_proxy['password']}@{self.webshare_proxy['server'].replace('http://', '')}"
-                async with session.get(url.strip(), headers=self.headers, timeout=timeout, proxy=proxy_url) as response:
+                async with session.get(url.strip(), headers=headers, timeout=timeout, proxy=proxy_url) as response:
                     return await self._process_response(response, url, approach)
                     
             elif approach.startswith('playwright_') and PLAYWRIGHT_AVAILABLE:
@@ -460,7 +549,14 @@ class AsyncURLProcessor:
                 
                 try:
                     # Navigate to page
-                    await page.goto(url.strip(), wait_until='networkidle', timeout=30000)
+                    # Longer timeout for Academy.com due to dynamic content
+                    domain = self._get_domain(url)
+                    if 'academy.com' in domain.lower():
+                        await page.goto(url.strip(), wait_until='networkidle', timeout=45000)
+                        # Additional wait for JavaScript content to load
+                        await page.wait_for_timeout(3000)  # Wait 3 seconds for dynamic content
+                    else:
+                        await page.goto(url.strip(), wait_until='networkidle', timeout=30000)
                     
                     # Get page content
                     html_content = await page.content()
@@ -510,6 +606,17 @@ class AsyncURLProcessor:
         if response.status == 200:
             try:
                 html_content = await response.text()
+                
+                # Check content and add delays for dynamic loading
+                domain = self._get_domain(url)
+                if 'academy.com' in domain.lower():
+                    # Academy.com loads content via JavaScript after initial response
+                    # aiohttp cannot execute JavaScript, so we're limited to initial HTML
+                    if 'Loading' in html_content or 'loading' in html_content or len(html_content) < 10000:
+                        print(f"⚠️  Academy.com page appears to be loading content dynamically: {url.strip()}")
+                        print(f"    Content length: {len(html_content)} chars - may need JavaScript execution")
+                
+                # Use the original pattern for all sites (no fallbacks)
                 matches = re.findall(self.pattern, html_content, re.IGNORECASE)
                 count = len(matches)
             except Exception as e:
@@ -531,16 +638,20 @@ class AsyncURLProcessor:
                     })
             
             if count >= self.min_count:
-                print(f"✅ [{current_count}] VALID ({approach}): {url.strip()} ({count} instances)")
+                print(f"✅ [{current_count}] VALID ({approach}) [HTTP {response.status}]: {url.strip()} ({count} instances)")
                 return True, count, url.strip()
             else:
                 # Show all URLs for real-time monitoring
-                print(f"❌ [{current_count}] INVALID ({approach}): {url.strip()} ({count} instances)")
+                print(f"❌ [{current_count}] INVALID ({approach}) [HTTP {response.status}]: {url.strip()} ({count} instances)")
                 # Return "invalid" status (not retry-able) - use special return value
                 return "invalid", count, url.strip()
         else:
             # HTTP error status (not 200)
             if response.status in [429, 503, 502, 504]:  # Rate limit or server errors - retry
+                async with self._counter_lock:
+                    self.processed_count += 1
+                    current_count = self.processed_count
+                print(f"🔄 [{current_count}] RETRY NEEDED ({approach}) [HTTP {response.status}]: {url.strip()}")
                 return False, 0, url.strip()
             else:
                 # Other HTTP errors (404, 403, etc.) - don't retry
