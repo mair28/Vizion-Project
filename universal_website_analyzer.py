@@ -271,7 +271,7 @@ class UniversalWebsiteAnalyzer:
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise RuntimeError("OPENAI_API_KEY is not set")
-
+            
             self.openai_client = openai.OpenAI(api_key=api_key)
             self.openai_model = "gpt-4o"  # keep your chosen model
             print_success("SUCCESS: OpenAI AI-POWERED analysis enabled (GPT-4o)")
@@ -1882,23 +1882,23 @@ Return as JSON object in this format:
                         "reduced_motion": random.choice(["reduce", "no-preference"]),
                         "forced_colors": random.choice(["active", "none"]),
                         "extra_http_headers": {
-                            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
-                            "Accept-Language": "en-US,en;q=0.9",
-                            "Accept-Encoding": "gzip, deflate, br",
-                            "Connection": "keep-alive",
-                            "Upgrade-Insecure-Requests": "1",
-                            "Sec-Fetch-Dest": "document",
-                            "Sec-Fetch-Mode": "navigate",
-                            "Sec-Fetch-Site": "none",
-                            "Sec-Fetch-User": "?1",
-                            "Cache-Control": "max-age=0",
-                            "DNT": "1",
-                            "Sec-Ch-Ua": f'"Not_A Brand";v="8", "Chromium";v="{random.randint(110, 125)}", "Google Chrome";v="{random.randint(110, 125)}"',
-                            "Sec-Ch-Ua-Mobile": "?0",
-                            "Sec-Ch-Ua-Platform": f'"{random.choice(["Windows", "macOS", "Linux"])}"',
-                            "Sec-Ch-Ua-Platform-Version": f'"{random.randint(10, 15)}.{random.randint(0, 9)}.{random.randint(0, 9)}"'
-                        }
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Accept-Encoding": "gzip, deflate, br",
+                        "Connection": "keep-alive",
+                        "Upgrade-Insecure-Requests": "1",
+                        "Sec-Fetch-Dest": "document",
+                        "Sec-Fetch-Mode": "navigate",
+                        "Sec-Fetch-Site": "none",
+                        "Sec-Fetch-User": "?1",
+                        "Cache-Control": "max-age=0",
+                        "DNT": "1",
+                        "Sec-Ch-Ua": f'"Not_A Brand";v="8", "Chromium";v="{random.randint(110, 125)}", "Google Chrome";v="{random.randint(110, 125)}"',
+                        "Sec-Ch-Ua-Mobile": "?0",
+                        "Sec-Ch-Ua-Platform": f'"{random.choice(["Windows", "macOS", "Linux"])}"',
+                        "Sec-Ch-Ua-Platform-Version": f'"{random.randint(10, 15)}.{random.randint(0, 9)}.{random.randint(0, 9)}"'
                     }
+                }
                 
                 if proxy_dict:
                     context_args["proxy"] = proxy_dict
@@ -1974,7 +1974,7 @@ Return as JSON object in this format:
                     else:
                         print(f"Still seeing protection page after Playwright {approach['label']} bypass")
                         browser.close()
-                        
+                
             except Exception as e:
                 if 'browser' in locals():
                     try:
@@ -2000,7 +2000,7 @@ Return as JSON object in this format:
         # If all 4 approaches failed
         print_error("All 4 Playwright approaches failed (headless+no-proxy, headless+proxy, non-headless+no-proxy, non-headless+proxy)")
         return None
-    
+                
     def _fetch_playwright_subprocess(self, url: str, headless: bool = True) -> Optional[str]:
         """Fallback: Run Playwright in a subprocess to avoid event loop conflicts"""
         import subprocess
@@ -2038,7 +2038,7 @@ def fetch_with_playwright():
             html = page.content()
             browser.close()
             return html
-    except Exception as e:
+        except Exception as e:
         print(f"Error: {{e}}", file=sys.stderr)
         return None
 
@@ -2266,7 +2266,7 @@ if result:
                 # Add proxy if available
                 if self.proxies:
                     proxy = random.choice(self.proxies)
-                    
+                
                     # Use Webshare proxy (only proxy type we support now)
                     if 'server' in proxy:
                         server = proxy['server'].replace('http://', '').replace('https://', '')
@@ -2452,25 +2452,33 @@ if result:
     
     def _is_protection_page(self, html: str) -> bool:
         """Check if page is a protection/challenge page (NOT marketing popups)"""
-        # More specific protection indicators to avoid false positives
-        # Note: cf-ray appears in headers of successful requests, so we need to be more specific
+        # Only detect ACTUAL protection pages, not normal content with these words
         protection_indicators = [
             'incapsula incident id', 'imperva', 'cloudflare ray id',
             'checking your browser before', 'ddos protection by',
             'please wait while we', 'security check in progress', 
-            'bot detection', 'access denied by', 'blocked by',
+            'bot detection', 'access denied by',
             'solve this challenge', 'complete the captcha',
             'human verification required', 'ray id:',
             'attention required! cloudflare', 'checking if the site connection is secure',
-            'enable javascript and cookies to continue'
+            'enable javascript and cookies to continue',
+            'cloudflare.com'  # More specific cloudflare detection
         ]
         
         html_lower = html.lower()
         detected_protection = []
         
+        # Only detect if page is clearly a protection page
+        # Ignore "blocked by" unless it's in a protection context
         for indicator in protection_indicators:
             if indicator in html_lower:
                 detected_protection.append(indicator)
+        
+        # Additional stricter checks for ambiguous terms
+        if 'blocked by' in html_lower:
+            # Only consider it protection if page is short AND has other protection signs
+            if len(html) < 10000 and any(word in html_lower for word in ['cloudflare', 'ddos', 'security', 'protection']):
+                detected_protection.append('blocked by (protection context)')
         
         # Only return True if we have strong evidence of protection
         if detected_protection:
@@ -2478,8 +2486,8 @@ if result:
             print(f"Real protection detected: {', '.join(detected_protection)}")
             return True
             
-        # Additional check: if page is very short and contains protection keywords
-        if len(html) < 5000 and any(word in html_lower for word in ['access denied', 'blocked', 'forbidden']):
+        # Additional check: if page is very short and contains clear protection keywords
+        if len(html) < 5000 and any(word in html_lower for word in ['access denied', 'forbidden', 'unauthorized']):
             self.analysis_results['protection_detected'].append('short_protection_page')
             print("Short protection page detected")
             return True
@@ -2540,15 +2548,20 @@ if result:
                 html = self._fetch_with_selenium(url)
                 if html and not self._is_protection_page(html):
                     print_success(f"SUCCESS with remembered {successful_approach} approach!")
-                    return html
+            return html
         
         # Try SIMPLE approach first (if not already tried)
         if successful_approach != 'requests':
             html = self._fetch_simple_like_validate(url)
-            if html and not self._is_protection_page(html):
-                print("SUCCESS with simple validate.py-style approach!")
-                self.approach_memory.record_successful_approach(domain, 'requests')
-                return html
+            if html:
+                # Check if it's a real protection page (not just containing "blocked by" text)
+                if not self._is_protection_page(html):
+                    print("SUCCESS with simple validate.py-style approach!")
+                    self.approach_memory.record_successful_approach(domain, 'requests')
+                    return html
+                else:
+                    print("Simple approach got protection page, trying other methods...")
+                    html = None  # Clear the variable to prevent false CF-RAY detection
         
         # If simple approach got cf-ray protection, try specialized bypass
         if html and 'cf-ray' in html.lower():
@@ -2622,8 +2635,9 @@ if result:
         
         soup = BeautifulSoup(html, 'html.parser')
         
-        # Save homepage for inspection
-        homepage_file = f"{self.domain}_homepage.html"
+        # Save homepage for inspection in html_samples folder
+        os.makedirs('html_samples', exist_ok=True)
+        homepage_file = f"html_samples/{self.domain}_homepage.html"
         with open(homepage_file, 'w', encoding='utf-8') as f:
             f.write(html)
         
@@ -2753,8 +2767,9 @@ if result:
         
         soup = BeautifulSoup(html, 'html.parser')
         
-        # Save catalog page for inspection
-        catalog_file = f"{self.domain}_catalog.html"
+        # Save catalog page for inspection in html_samples folder
+        os.makedirs('html_samples', exist_ok=True)
+        catalog_file = f"html_samples/{self.domain}_catalog.html"
         with open(catalog_file, 'w', encoding='utf-8') as f:
             f.write(html)
         
@@ -2839,6 +2854,8 @@ if result:
         product_indicators = [
             # Common patterns
             '/product/', '/item/', '/p/', '/products/', '/productdetail/', '/detail/', '/pd/', '/prod/',
+            # URL ending patterns
+            '/p', '/item', '/product',
             # More specific patterns
             '/catalog/', '/shop/', '/buy/', '/goods/', '/merchandise/', '/sku/', '/model/',
             # ID-based patterns
@@ -2850,6 +2867,31 @@ if result:
         # Group links by patterns
         pattern_groups = {}
         href_analysis = {}
+        
+        # Check for hyphenated product slug patterns (e.g., /single-use-plastic-needle-holders)
+        hyphenated_product_links = []
+        for link in all_links:
+            href = link.get('href', '')
+            if href and href.startswith('/') and '-' in href:
+                # Look for URLs with multiple hyphens that might be product slugs
+                path_parts = href.strip('/').split('/')
+                if len(path_parts) == 1:  # Single path segment
+                    segment = path_parts[0]
+                    # Check if it has multiple hyphens and looks like a product name
+                    if segment.count('-') >= 2 and len(segment) > 10:
+                        text = link.get_text(strip=True)
+                        if text and len(text) < 200:  # Reasonable title length
+                            hyphenated_product_links.append({
+                                'href': href,
+                                'text': text,
+                                'classes': link.get('class', []),
+                                'parent_tag': link.parent.name if link.parent else None,
+                                'parent_classes': link.parent.get('class', []) if link.parent else [],
+                                'full_link_html': str(link)
+                            })
+        
+        if hyphenated_product_links:
+            pattern_groups['hyphenated-slugs'] = hyphenated_product_links
         
         for link in all_links:
             href = link.get('href', '')
@@ -2868,12 +2910,21 @@ if result:
                 # Analyze href structure for patterns
                 href_lower = href.lower()
                 
-                # Check for product indicators
+                # Check for product indicators - prioritize ending patterns to avoid false positives
                 best_indicator = None
-                for indicator in product_indicators:
-                    if indicator in href_lower:
-                        best_indicator = indicator
+                
+                # First: Check for URLs ending with specific patterns (highest priority)
+                for pattern in ['/p', '/item', '/product']:
+                    if href_lower.endswith(pattern):
+                        best_indicator = pattern + '_end'
                         break
+                        
+                # Second: If no ending match, check for containing patterns
+                if not best_indicator:
+                    for indicator in product_indicators:
+                        if indicator in href_lower:
+                            best_indicator = indicator
+                            break
             
             if best_indicator:
                 if best_indicator not in pattern_groups:
@@ -3098,6 +3149,12 @@ if result:
         # Generate detailed explanation based on selector type
         if '/product/' in pattern_key:
             return f"Product links on this site have URLs containing '/product/'; this selector targets anchor tags that contain '/product/' in their href attributes, effectively selecting product page links. Found {count} matching links."
+        elif pattern_key == '/p_end':
+            return f"Product links on this site end with '/p' (e.g., /product-name/id/p); this selector targets anchor tags with href attributes ending with '/p', effectively selecting product page links. Found {count} matching links."
+        elif pattern_key == '/item_end':
+            return f"Product links on this site end with '/item' (e.g., /product-name/id/item); this selector targets anchor tags with href attributes ending with '/item', effectively selecting product page links. Found {count} matching links."
+        elif pattern_key == '/product_end':
+            return f"Product links on this site end with '/product' (e.g., /product-name/id/product); this selector targets anchor tags with href attributes ending with '/product', effectively selecting product page links. Found {count} matching links."
         elif '/p/' in pattern_key:
             return f"Product links on this site have URLs containing '/p/' and often end with '.html'; this selector targets all anchor tags with href attributes starting with '/p/' or containing '/p/' and ending with '.html', effectively selecting product page links without including other non-product links. Found {count} matching links."
         elif '/item/' in pattern_key:
@@ -3110,6 +3167,18 @@ if result:
         # Handle data attribute patterns
         if pattern_key == 'data-product-click':
             return "a[data-event-type='product-click']"
+        
+        # Handle hyphenated-slugs pattern
+        if pattern_key == 'hyphenated-slugs':
+            return "a[href^='/'][href*='-'][title]"
+        
+        # Handle URL ending patterns
+        if pattern_key == '/p_end':
+            return "a[href$='/p']"
+        elif pattern_key == '/item_end':
+            return "a[href$='/item']"
+        elif pattern_key == '/product_end':
+            return "a[href$='/product']"
         
         # Analyze the actual href patterns in the links
         if not links:
@@ -3285,8 +3354,9 @@ if result:
         
         soup = BeautifulSoup(html, 'html.parser')
         
-        # Save product page for inspection
-        product_file = f"{self.domain}_product_sample.html"
+        # Save product page for inspection in html_samples folder
+        os.makedirs('html_samples', exist_ok=True)
+        product_file = f"html_samples/{self.domain}_product_sample.html"
         with open(product_file, 'w', encoding='utf-8') as f:
             f.write(html)
         
@@ -3368,7 +3438,7 @@ if result:
                             if h1.get('class'):
                                 class_str = ' '.join(h1.get('class'))
                                 if any(term in class_str.lower() for term in ['product', 'title', 'name']):
-                                    title_text = h1.get_text(strip=True)
+                                    title_text = h1.get_text(strip=False).strip()
                                     if title_text and self._is_valid_field_value('Product_Title', title_text):
                                         # Create a specific regex for this H1 structure
                                         regex_pattern = f'<h1[^>]*class="[^"]*{re.escape(class_str.split()[0])}[^"]*"[^>]*>(?P<Product_Title>[^<]+)</h1>'
@@ -4141,8 +4211,8 @@ if result:
                 
                 elif strategy['type'] == 'tag':
                     element = soup.find(strategy['tag'])
-                    if element and element.get_text(strip=True):
-                        value = element.get_text(strip=True)
+                    if element and element.get_text(strip=False).strip():
+                        value = element.get_text(strip=False).strip()
                         regex = f"<{strategy['tag']}[^>]*>(?P<{field_name}>[^<]+)</{strategy['tag']}>"
                         return {
                             'regex': regex,
@@ -4154,7 +4224,7 @@ if result:
                     for class_name in strategy['classes']:
                         elements = soup.find_all(class_=class_name)
                         for element in elements:
-                            text = element.get_text(strip=True)
+                            text = element.get_text(strip=False).strip()
                             if text and self._is_valid_field_value(field_name, text):
                                 regex = f'class="[^"]*{class_name}[^"]*"[^>]*>(?P<{field_name}>[^<]+)'
                                 return {
@@ -4173,7 +4243,7 @@ if result:
                             if element.get('class'):
                                 class_str = ' '.join(element.get('class'))
                                 if re.search(regex_pattern, class_str, re.IGNORECASE):
-                                    text = element.get_text(strip=True)
+                                    text = element.get_text(strip=False).strip()
                                     if text and self._is_valid_field_value(field_name, text):
                                         # Create a regex that matches the dynamic class pattern
                                         regex = f'class="[^"]*{regex_pattern}[^"]*"[^>]*>(?P<{field_name}>[^<]+)'
@@ -4187,7 +4257,7 @@ if result:
                     for id_name in strategy['ids']:
                         element = soup.find(id=id_name)
                         if element:
-                            text = element.get_text(strip=True)
+                            text = element.get_text(strip=False).strip()
                             if text and self._is_valid_field_value(field_name, text):
                                 regex = f'id="{id_name}"[^>]*>(?P<{field_name}>[^<]+)'
                                 return {
@@ -4212,7 +4282,7 @@ if result:
                     # Handle specific data-testid values like data-testid="manufacturer-link"
                     elements = soup.find_all(attrs={strategy['attr']: strategy['value']})
                     for element in elements:
-                        text = element.get_text(strip=True)
+                        text = element.get_text(strip=False).strip()
                         if text and self._is_valid_field_value(field_name, text):
                             regex = f'{strategy["attr"]}="{strategy["value"]}"[^>]*>(?P<{field_name}>[^<]+)'
                             return {
@@ -4625,7 +4695,7 @@ if result:
                 return ""
             
             # Get element text content
-            text_content = element.get_text(strip=True)
+            text_content = element.get_text(strip=False).strip()
             if not text_content:
                 return ""
             
@@ -4818,7 +4888,7 @@ if result:
             
             if capture_content:
                 # Clean the content for capture (remove quotes, extra whitespace)
-                content = element.get_text(strip=True)
+                content = element.get_text(strip=False).strip()
                 # Handle quoted content like ' " BOISE WHITE PAPER, L.L.C. " '
                 if content.startswith('"') and content.endswith('"'):
                     content_pattern = f'\\s*"\\s*(?P<{field_name}>[^"]+)\\s*"\\s*'
@@ -4828,7 +4898,7 @@ if result:
                 return f'<{tag_name}[^>]*{class_pattern}[^>]*>{content_pattern}</{tag_name}>'
             else:
                 # Just match the element structure without capturing
-                element_text = element.get_text(strip=True)
+                element_text = element.get_text(strip=False).strip()
                 return f'<{tag_name}[^>]*{class_pattern}[^>]*>{re.escape(element_text)}</{tag_name}>'
                 
         except Exception as e:
@@ -4840,7 +4910,7 @@ if result:
         try:
             tag_name = element.name
             classes = element.get('class', [])
-            content = element.get_text(strip=True)
+            content = element.get_text(strip=False).strip()
             
             if classes:
                 primary_class = classes[0]
@@ -4899,15 +4969,11 @@ if result:
                     else:
                         display_url = f"{self.base_url.rstrip('/')}/{href.lstrip('/')}"
                     
-                    # Truncate long URLs for better display
-                    if len(display_url) > 80:
-                        display_url = display_url[:77] + "..."
+                    # Show full URLs without truncation for better pattern analysis
                     
                     print(f"         {j}. {display_url}")
                     if title and len(title.strip()) > 0:
-                        title_display = title.strip()[:60]
-                        if len(title.strip()) > 60:
-                            title_display += "..."
+                        title_display = title.strip()
                         print(f"            \"{title_display}\"")
             else:
                 print(f"      No sample URLs available")
@@ -4926,7 +4992,7 @@ if result:
                     print(f"WARNING: Please enter a number between 1 and {len(product_patterns)}")
             except ValueError:
                 print("WARNING: Please enter a valid number")
-
+    
     def generate_config(self, catalog_url: str = None, product_url: str = None) -> Dict[str, Any]:
         """Generate scraper configuration based on analysis"""
         print("Generating scraper configuration...")
