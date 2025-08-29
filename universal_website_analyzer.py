@@ -2703,7 +2703,7 @@ if result:
                 html = self._fetch_with_selenium(url)
                 if html and not self._is_protection_page(html):
                     print_success(f"SUCCESS with remembered {successful_approach} approach!")
-            return html
+                    return html
         
         # Try SIMPLE approach first (if not already tried)
         if successful_approach != 'requests':
@@ -3782,7 +3782,7 @@ if result:
         if not html:
             # Fallback to regular fetch_page if extended wait fails
             print("Dynamic wait failed, trying regular fetch...")
-        html = self.fetch_page(product_url)
+            html = self.fetch_page(product_url)
             
         if not html:
             self.analysis_results['errors'].append(f"Failed to fetch product page: {product_url}")
