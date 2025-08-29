@@ -338,14 +338,26 @@ class UniversalWebsiteAnalyzer:
                 for container in soup.find_all(['div', 'section', 'ul', 'ol', 'main', 'article']):
                     links = container.find_all('a', href=True)
                     if len(links) >= 2:  # Container with multiple links
-                        # Score container by link relevance
+                        # Score container by link relevance with domain-specific patterns
                         score = 0
+                        # Get domain context for better scoring
+                        catalog_url = getattr(self, 'current_catalog_url', '') or self.base_url
+                        domain = urlparse(catalog_url).netloc if catalog_url else ''
+                        
                         for link in links:
                             href = link.get('href', '').lower()
                             text = link.get_text(strip=True).lower()
-                            if any(term in href or term in text for term in ['product', 'item', '/p/', '/prod']):
+                            
+                            # Domain-specific scoring
+                            if 'plumbersstock.com' in domain and href.endswith('.html') and '-' in href:
+                                score += 3  # High score for plumbersstock pattern
+                            elif any(term in href for term in ['product', 'item', '/p/', '/prod']):
                                 score += 2
-                            elif len(text.split()) >= 2:  # Multi-word link text
+                            elif len(text.split()) >= 2 and not any(nav in text for nav in ['home', 'cart', 'account', 'login']):
+                                score += 1
+                            
+                            # Bonus for product-like text content
+                            if any(term in text for term in ['model', 'part', 'sku', '$', '€', '£']):
                                 score += 1
                         if score >= 3:
                             link_containers.append((container, score))
@@ -639,6 +651,7 @@ class UniversalWebsiteAnalyzer:
                 catalog_headers['Referer'] = base_url
                 
                 cat_response = session.get(candidate, headers=catalog_headers, timeout=timeout, allow_redirects=True)
+                print(f"  → Catalog attempt: {candidate}, status {cat_response.status_code}")
                 if cat_response.status_code == 200:
                     catalog_url = candidate
                     print(f"  → Catalog success: {catalog_url}, cookies: {len(session.cookies)}")
@@ -884,17 +897,31 @@ Other JSON: {json.dumps(json_ld_data['other_json'][:2], indent=2) if json_ld_dat
 Microdata: {json.dumps(json_ld_data['microdata'][:2], indent=2) if json_ld_data['microdata'] else 'None'}
 """
                 
+                # Get catalog URL context for better analysis
+                catalog_url = getattr(self, 'current_catalog_url', '') or self.base_url
+                domain = urlparse(catalog_url).netloc
+                
                 prompt = f"""
-Analyze this HTML from an e-commerce website and identify CSS selectors for product links.
+Analyze this HTML from a catalog/category page on {domain} and identify CSS selectors for product links.
 
-Look for:
-1. Links that lead to individual product pages
-2. Common patterns in href attributes (like /product/, /item/, /p/, etc.)
-3. CSS classes that indicate product links
-4. Container elements that hold product listings
-5. Use the structured data below to understand the product structure
+CONTEXT: This HTML comes from the catalog URL: {catalog_url}
+The goal is to find links that lead to individual product detail pages from this catalog listing.
 
-HTML sample:
+SPECIFIC ANALYSIS INSTRUCTIONS:
+1. Focus on links that would lead to INDIVIDUAL PRODUCT PAGES (not categories, brands, or navigation)
+2. Look for URL patterns in href attributes that indicate product pages
+3. Analyze the actual HTML structure to find product containers and their links
+4. Consider the domain structure - if it's plumbersstock.com, look for .html patterns; if it's other domains, look for their specific patterns
+5. Prioritize links that appear multiple times in a listing format
+6. Exclude obvious non-product links (navigation, account, cart, brands, help, etc.)
+
+DOMAIN-SPECIFIC HINTS:
+- plumbersstock.com: Look for .html ending URLs with hyphens (e.g., /product-name-model.html)
+- Sites with /product/ or /p/ patterns: Look for those specific patterns
+- Sites with product IDs: Look for numeric or alphanumeric patterns
+- E-commerce sites: Look for links within product cards, tiles, or grid items
+
+HTML sample from {catalog_url}:
 ```html
 {html_sample}
 ```
@@ -904,18 +931,22 @@ IMPORTANT: Return ONLY valid JSON with this exact structure (no markdown, no exp
 {{
     "product_link_patterns": [
         {{
-            "selector": "a[href*='/product/']",
-            "explanation": "Links containing /product/ in URL",
+            "selector": "a[href$='.html'][href*='-']:not([href*='/brands/']):not([href*='/account'])",
+            "explanation": "Product links ending with .html containing hyphens, excluding non-product pages",
             "confidence": 0.9,
             "example_count": 5
         }}
     ],
     "container_selectors": [
         {{
-            "selector": ".product-grid .product-item",
-            "explanation": "Individual product containers",
+            "selector": ".product-item, .product-card, .item-container",
+            "explanation": "Individual product containers in the listing",
             "confidence": 0.8
         }}
+    ],
+    "url_patterns_detected": [
+        "Pattern 1: /product-name-model.html",
+        "Pattern 2: /category/product-id"
     ],
     "structured_data_insights": "Insights from JSON-LD or microdata if available"
 }}
@@ -993,9 +1024,9 @@ IMPORTANT: Return ONLY valid JSON with this exact structure (no markdown, no exp
             "confidence": 0.7
         }},
         "product_code": {{
-            "selectors": [".upc", ".gtin"],
-            "regex_patterns": ["upc[\"\\s:]*([A-Za-z0-9-_]+)"],
-            "json_paths": ["gtin", "upc", "gtin13"] if found in structured data,
+            "selectors": [".upc", ".gtin", ".ean", ".ean13"],
+            "regex_patterns": ["upc[\"\\s:]*([A-Za-z0-9-_]+)", "ean[\"\\s:]*([0-9]{{8}}|[0-9]{{13}})"],
+            "json_paths": ["gtin", "upc", "gtin13", "ean", "ean13", "europeanArticleNumber"] if found in structured data,
             "confidence": 0.6
         }}
     }},
@@ -1584,6 +1615,7 @@ Return as JSON object in this format:
                 time.sleep(random.uniform(0.5, 2.0))
                 
                 response = session.get(url, **approach)
+                print(f"Approach {i+1}: status {response.status_code}, content length: {len(response.text)}")
                 
                 # Check for protection pages
                 if self._is_protection_page(response.text):
@@ -1738,6 +1770,106 @@ Return as JSON object in this format:
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15"
         ]
         return random.choice(user_agents)
+    
+    def _fetch_with_playwright_extended_wait(self, url: str) -> Optional[str]:
+        """Fetch page using Playwright with extended waits for SPA/dynamic content"""
+        if not self.use_playwright:
+            return None
+        
+        from playwright.sync_api import sync_playwright
+        
+        # Extended wait approach for complex SPA sites
+        try:
+            with sync_playwright() as p:
+                # Use Chromium for best SPA support
+                browser = p.chromium.launch(
+                    headless=True,
+                    args=[
+                        '--no-sandbox',
+                        '--disable-blink-features=AutomationControlled',
+                        '--disable-dev-shm-usage',
+                        '--disable-extensions',
+                        '--disable-gpu',
+                        '--no-first-run',
+                        '--no-default-browser-check',
+                        '--disable-default-apps',
+                        '--disable-background-timer-throttling',
+                        '--disable-renderer-backgrounding',
+                        '--disable-backgrounding-occluded-windows'
+                    ]
+                )
+                
+                context = browser.new_context(
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36',
+                    viewport={'width': 1920, 'height': 1080},
+                    java_script_enabled=True
+                )
+                
+                page = context.new_page()
+                
+                print("Loading page with extended waits for dynamic content...")
+                
+                # Navigate to page
+                page.goto(url, wait_until='domcontentloaded', timeout=60000)
+                
+                # Wait for network activity to settle
+                print("Waiting for network idle...")
+                try:
+                    page.wait_for_load_state('networkidle', timeout=15000)
+                except:
+                    print("Network idle timeout, continuing...")
+                
+                # Additional wait for JavaScript frameworks to initialize
+                print("Waiting for JavaScript frameworks to load...")
+                page.wait_for_timeout(5000)
+                
+                # Wait for common dynamic content indicators
+                dynamic_selectors = [
+                    '[data-test-selector]',  # Common in React apps
+                    '.TypographyStyle-sc-',  # Styled components like waytekwire
+                    '[class*="sc-"]',        # Styled components
+                    '[ng-app]',              # Angular apps
+                    '[data-reactroot]',      # React root
+                    '.vue-app',              # Vue apps
+                    '[data-v-]',             # Vue components
+                    '.loading',              # Loading indicators
+                    '.spinner'               # Spinners
+                ]
+                
+                # Try to wait for any of these indicators
+                for selector in dynamic_selectors:
+                    try:
+                        page.wait_for_selector(selector, timeout=3000)
+                        print(f"Found dynamic content indicator: {selector}")
+                        break
+                    except:
+                        continue
+                
+                # Extra wait to ensure all content is fully loaded
+                print("Final wait for complete content loading...")
+                page.wait_for_timeout(8000)
+                
+                # Scroll to trigger any lazy loading
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(2000)
+                page.evaluate("window.scrollTo(0, 0)")
+                page.wait_for_timeout(1000)
+                
+                # Get the final HTML
+                html = page.content()
+                
+                browser.close()
+                
+                if html and len(html) > 1000:  # Ensure we got substantial content
+                    print_success(f"Extended wait successful! Got {len(html)} characters")
+                    return html
+                else:
+                    print(f"Extended wait got minimal content: {len(html) if html else 0} characters")
+                    return None
+                    
+        except Exception as e:
+            print(f"Extended Playwright wait failed: {e}")
+            return None
     
     def _fetch_with_playwright(self, url: str, fast_mode: bool = False) -> Optional[str]:
         """Fetch page using Playwright with headless/non-headless fallback and advanced anti-bot detection bypass"""
@@ -2452,6 +2584,10 @@ if result:
     
     def _is_protection_page(self, html: str) -> bool:
         """Check if page is a protection/challenge page (NOT marketing popups)"""
+        # If page is large (>100KB), it's very unlikely to be a protection page
+        if len(html) > 100000:
+            return False
+            
         # Only detect ACTUAL protection pages, not normal content with these words
         protection_indicators = [
             'incapsula incident id', 'imperva', 'cloudflare ray id',
@@ -2462,7 +2598,7 @@ if result:
             'human verification required', 'ray id:',
             'attention required! cloudflare', 'checking if the site connection is secure',
             'enable javascript and cookies to continue',
-            'cloudflare.com'  # More specific cloudflare detection
+            'cdn-cgi/challenge-platform'  # More specific cloudflare detection (not just cloudflare.com)
         ]
         
         html_lower = html.lower()
@@ -2480,8 +2616,8 @@ if result:
             if len(html) < 10000 and any(word in html_lower for word in ['cloudflare', 'ddos', 'security', 'protection']):
                 detected_protection.append('blocked by (protection context)')
         
-        # Only return True if we have strong evidence of protection
-        if detected_protection:
+        # Only return True if we have strong evidence of protection AND page is reasonably small
+        if detected_protection and len(html) < 100000:
             self.analysis_results['protection_detected'].extend(detected_protection)
             print(f"Real protection detected: {', '.join(detected_protection)}")
             return True
@@ -2524,6 +2660,25 @@ if result:
         except Exception as e:
             print(f"Error handling challenges: {e}")
         return False
+    
+    def fetch_page_with_dynamic_wait(self, url: str) -> Optional[str]:
+        """Fetch page with extended waiting for dynamic content (SPA sites)"""
+        print(f"Fetching with dynamic wait: {url}")
+        domain = self.approach_memory.get_domain_from_url(url)
+        successful_approach = self.approach_memory.get_successful_approach(domain)
+        
+        # For product pages, always try Playwright first if available for better dynamic content handling
+        if self.use_playwright:
+            print("Using Playwright with extended waits for dynamic content...")
+            html = self._fetch_with_playwright_extended_wait(url)
+            if html and not self._is_protection_page(html):
+                print_success("SUCCESS with Playwright extended wait!")
+                if not successful_approach:  # Record this approach as successful
+                    self.approach_memory.record_successful_approach(domain, 'playwright')
+                return html
+        
+        # If Playwright fails or is not available, fallback to regular fetch_page
+        return self.fetch_page(url)
     
     def fetch_page(self, url: str) -> Optional[str]:
         """Fetch page with multiple fallback methods using approach memory"""
@@ -2760,6 +2915,9 @@ if result:
             catalog_url = urljoin(self.base_url, catalog_links[0]['href'])
         
         print_info(f"Analyzing catalog page: {catalog_url}")
+        # Store current catalog URL for AI analysis context
+        self.current_catalog_url = catalog_url
+        
         html = self.fetch_page(catalog_url)
         if not html:
             self.analysis_results['errors'].append(f"Failed to fetch catalog page: {catalog_url}")
@@ -2772,6 +2930,20 @@ if result:
         catalog_file = f"html_samples/{self.domain}_catalog.html"
         with open(catalog_file, 'w', encoding='utf-8') as f:
             f.write(html)
+        print(f"Saved catalog HTML to: {catalog_file}")
+        
+        # Also save a debug version with just the links found
+        debug_file = f"html_samples/{self.domain}_catalog_links_debug.html"
+        with open(debug_file, 'w', encoding='utf-8') as f:
+            f.write(f"<html><head><title>Debug: Links found in {catalog_url}</title></head><body>\n")
+            f.write(f"<h1>All links found in catalog page</h1>\n")
+            f.write(f"<p>Total links found: {len(soup.find_all('a', href=True))}</p>\n")
+            for i, link in enumerate(soup.find_all('a', href=True)[:50], 1):  # Show first 50 links
+                href = link.get('href', '')
+                text = link.get_text(strip=True)[:100]  # Truncate long text
+                f.write(f"<p>{i}. <a href='{href}'>{text}</a> (href: {href})</p>\n")
+            f.write("</body></html>")
+        print(f"Saved debug links to: {debug_file}")
         
         # Find product links
         product_patterns = self._find_product_link_patterns(soup, html)
@@ -2796,6 +2968,16 @@ if result:
         ai_patterns_found = False
         if self.use_ai:
             ai_patterns = self._ai_analyze_html_for_patterns(html, "product_links")
+            
+            # Log AI insights about URL patterns
+            if ai_patterns.get('url_patterns_detected'):
+                print("AI detected URL patterns:")
+                for pattern in ai_patterns['url_patterns_detected']:
+                    print(f"  → {pattern}")
+            
+            if ai_patterns.get('structured_data_insights'):
+                print(f"AI structured data insights: {ai_patterns['structured_data_insights']}")
+            
             if ai_patterns.get('product_link_patterns'):
                 for ai_pattern in ai_patterns['product_link_patterns']:
                     # Test the AI-generated selector
@@ -2857,7 +3039,24 @@ if result:
         # If AI found good patterns, prioritize them but still run traditional analysis as backup
         if ai_patterns_found:
             print("AI successfully identified product patterns - traditional analysis will supplement")
+        
+        # Enhanced link detection: Look for links in common container patterns
         all_links = soup.find_all('a', href=True)
+        
+        # Also look for links within product container divs (common in modern sites)
+        product_container_classes = ['product', 'item', 'listing', 'card', 'tile', 'grid-item', 'product-item', 'product-card']
+        for class_name in product_container_classes:
+            containers = soup.find_all(['div', 'article', 'section'], class_=lambda x: x and any(cls in ' '.join(x).lower() for cls in [class_name]))
+            for container in containers:
+                container_links = container.find_all('a', href=True)
+                # Add container context to these links
+                for link in container_links:
+                    if link not in all_links:
+                        # Mark these as container-found links
+                        link['data-container-class'] = class_name
+                        all_links.append(link)
+        
+        print(f"Found {len(all_links)} total links (including container-nested links)")
         
         # Enhanced product URL patterns
         product_indicators = [
@@ -2878,10 +3077,44 @@ if result:
         href_analysis = {}
         
         # Check for hyphenated product slug patterns (e.g., /single-use-plastic-needle-holders)
+        # ENHANCED: Also look for .html ending product URLs
         hyphenated_product_links = []
+        html_product_links = []
+        
         for link in all_links:
             href = link.get('href', '')
-            if href and href.startswith('/') and '-' in href:
+            if not href:
+                continue
+                
+            # Check for .html ending product URLs (like plumbersstock.com)
+            if href.endswith('.html') and '-' in href:
+                # Skip obvious non-product pages
+                if not any(skip in href.lower() for skip in ['/brands/', '/account', '/checkout', '/cart', '/help', '/about', '/contact']):
+                    text = link.get_text(strip=True)
+                    if text and len(text) < 300:  # Reasonable title length
+                        # Get parent container info for better context
+                        parent_classes = []
+                        parent_tag = None
+                        if link.parent:
+                            parent_tag = link.parent.name
+                            parent_classes = link.parent.get('class', [])
+                            # Also check grandparent for more context
+                            if link.parent.parent:
+                                grandparent_classes = link.parent.parent.get('class', [])
+                                parent_classes.extend(grandparent_classes)
+                        
+                        html_product_links.append({
+                            'href': href,
+                            'text': text,
+                            'classes': link.get('class', []),
+                            'parent_tag': parent_tag,
+                            'parent_classes': parent_classes,
+                            'full_link_html': str(link),
+                            'title': link.get('title', '')
+                        })
+            
+            # Original hyphenated slug detection for non-.html URLs
+            if href.startswith('/') and '-' in href and not href.endswith('.html'):
                 # Look for URLs with multiple hyphens that might be product slugs
                 path_parts = href.strip('/').split('/')
                 if len(path_parts) == 1:  # Single path segment
@@ -2901,6 +3134,10 @@ if result:
         
         if hyphenated_product_links:
             pattern_groups['hyphenated-slugs'] = hyphenated_product_links
+            
+        # Add .html product links as a separate pattern group
+        if html_product_links:
+            pattern_groups['html-products'] = html_product_links
         
         # Check for product code patterns in the last path segment (e.g., /1049-0001s, /ABC-123, /en-us/1049-0001s)
         product_code_links = []
@@ -3212,17 +3449,81 @@ if result:
         """Convert any capture group in pattern to named group for specific field"""
         import re
         
-        # Find all capture groups and replace with named groups
-        # This handles any parenthesized capture group
-        def replace_group(match):
+        # Debug: show original pattern
+        if '(' in pattern and f'(?P<{field_name}>' not in pattern:
+            print(f"🔧 Converting pattern for {field_name}: {pattern}")
+        
+        # If pattern already has the correct named group, return as-is
+        if f'(?P<{field_name}>' in pattern:
+            return pattern
+        
+        # If pattern has other named groups, don't modify it (might break complex patterns)
+        if '(?P<' in pattern:
+            return pattern
+        
+        # Find the first unnamed capture group and replace it with named group
+        # This regex finds (content) but not (?P<name>content) or (?:content) or (?=content) or (?!content)
+        def replace_first_group(match):
             group_content = match.group(1)
             return f'(?P<{field_name}>{group_content})'
         
-        # Replace capture groups that aren't already named
-        # This regex finds (content) but not (?P<name>content) or (?:content)
-        pattern_with_named_group = re.sub(r'\((?!\?\w+)([^)]+)\)', replace_group, pattern)
+        # More precise regex that only matches simple capture groups
+        # Avoids matching lookaheads (?=), lookbehinds (?<=), non-capturing (?:), etc.
+        pattern_with_named_group = re.sub(r'\((?![?])((?:[^()]+|\([^)]*\))*)\)', replace_first_group, pattern, count=1)
+        
+        # Additional check: if still no named group and pattern has parentheses, try replacing ALL capture groups
+        if f'(?P<{field_name}>' not in pattern_with_named_group and '(' in pattern:
+            # Replace ALL unnamed capture groups with the same named group
+            pattern_with_named_group = re.sub(r'\((?![?])((?:[^()]+|\([^)]*\))*)\)', replace_first_group, pattern)
+        
+        # If no capture group was found, wrap the entire pattern (fallback)
+        if pattern_with_named_group == pattern and '(' not in pattern:
+            # For patterns without capture groups, try to find a reasonable capture point
+            # Look for common patterns like quoted strings, numbers, or word characters
+            if '"' in pattern and '[^"]*' in pattern:
+                # Replace [^"]* with named group
+                pattern_with_named_group = pattern.replace('[^"]*', f'(?P<{field_name}>[^"]*)')
+            elif r'[\d,]+\.?\d*' in pattern:
+                # Replace number pattern with named group
+                pattern_with_named_group = pattern.replace(r'[\d,]+\.?\d*', f'(?P<{field_name}>[\\d,]+\\.?\\d*)')
+            elif '[^<]+' in pattern:
+                # Replace [^<]+ with named group
+                pattern_with_named_group = pattern.replace('[^<]+', f'(?P<{field_name}>[^<]+)')
+            else:
+                # Last resort: add capture group around likely content patterns
+                if r'\w+' in pattern:
+                    pattern_with_named_group = pattern.replace(r'\w+', f'(?P<{field_name}>\\w+)', 1)
+        
+        # Debug: show converted pattern
+        if pattern != pattern_with_named_group:
+            print(f"✅ Converted to: {pattern_with_named_group}")
+        elif '(' in pattern:
+            print(f"⚠️  No conversion applied to: {pattern}")
         
         return pattern_with_named_group
+    
+    def _validate_regex_pattern(self, pattern: str, field_name: str) -> bool:
+        """Validate that a regex pattern is properly formed and has named groups"""
+        if not pattern:
+            return False
+        
+        try:
+            # Try to compile the regex to check for syntax errors
+            compiled = re.compile(pattern, re.DOTALL | re.IGNORECASE)
+            
+            # Check if the pattern has the correct named group for this field
+            if f'(?P<{field_name}>' not in pattern:
+                print(f"WARNING: Pattern for {field_name} missing named group: {pattern}")
+                return False
+            
+            # Try a simple test to see if it would work
+            test_html = f'<div class="test">{field_name} test value</div>'
+            match = compiled.search(test_html)
+            
+            return True
+        except re.error as e:
+            print(f"ERROR: Invalid regex pattern for {field_name}: {pattern} - {e}")
+            return False
     
     def _generate_detailed_explanation(self, pattern: Dict) -> str:
         """Generate detailed explanation like Belkin example"""
@@ -3245,6 +3546,8 @@ if result:
             return f"Product links on this site use '/item/' in their URLs; this selector targets anchor tags containing '/item/' in their href attributes to identify product pages. Found {count} matching links."
         elif pattern_key == 'locale-product-codes':
             return f"Product links on this site have hyphenated product codes as the last path segment (e.g., /en-us/1049-0001s, /1049-0001s, /ABC-123); this selector targets anchor tags with href attributes ending in hyphenated product codes, effectively selecting individual product pages. Found {count} matching links."
+        elif pattern_key == 'html-products':
+            return f"Product links on this site end with .html and contain hyphens in the URL path (e.g., /action-18011-75-34in-mip-x-1-buttress-transition-nipple.html); this selector targets anchor tags with href attributes ending in .html and containing hyphens, while excluding non-product pages like brands, account, and cart pages. Found {count} matching links."
         else:
             return f"Product links identified by pattern '{pattern_key}' using selector '{selector}'. Found {count} matching links."
     
@@ -3277,6 +3580,25 @@ if result:
             
             # Fallback selector
             return "a[href*='-'][href*='/']"
+        
+        # Handle html-products pattern (e.g., plumbersstock.com style .html product URLs)
+        if pattern_key == 'html-products':
+            # Generate selector for .html ending product URLs with hyphens
+            selectors = []
+            
+            # Basic selector for .html products with hyphens
+            selectors.append("a[href$='.html'][href*='-']")
+            
+            # Exclude common non-product pages
+            exclusions = ":not([href*='/brands/']):not([href*='/account']):not([href*='/checkout']):not([href*='/cart'])"
+            selectors.append(f"a[href$='.html'][href*='-']{exclusions}")
+            
+            # If links have title attributes, include that for better specificity
+            if links and any(link.get('title') for link in links):
+                selectors.append(f"a[href$='.html'][href*='-'][title]{exclusions}")
+            
+            # Return the most specific selector
+            return selectors[-1] if selectors else "a[href$='.html'][href*='-']"
         
         # Handle URL ending patterns
         if pattern_key == '/p_end':
@@ -3453,7 +3775,15 @@ if result:
                 return {}
         
         print_info(f"Analyzing product page: {product_url}")
+        
+        # For product pages, we need to be more careful about dynamic content loading
+        # Try with extended wait times for SPA sites
+        html = self.fetch_page_with_dynamic_wait(product_url)
+        if not html:
+            # Fallback to regular fetch_page if extended wait fails
+            print("Dynamic wait failed, trying regular fetch...")
         html = self.fetch_page(product_url)
+            
         if not html:
             self.analysis_results['errors'].append(f"Failed to fetch product page: {product_url}")
             return {}
@@ -3608,7 +3938,8 @@ if result:
                     'manufacturer': 'Manufacturer',
                     'sku': 'Sku',
                     'model': 'Model_Number',
-                    'product_code': 'Product_Code'
+                    'product_code': 'Product_Code',
+                    'ean': 'Product_Code'  # EAN maps to Product_Code
                 }
                 
                 # Extract structured data for JSON path analysis
@@ -3764,16 +4095,16 @@ if result:
                 {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*amount[^"]*"[^>]*>[\$£€¥¢₹₽¤]?([\d,]+\.?\d*)</span>'},
                 
                 # 6. Generic regex patterns (lowest priority)
-                {'type': 'regex', 'pattern': r'[\$£€¥¢₹₽¤]([\d,]+\.?\d*)'},
-                {'type': 'regex', 'pattern': r'price["\s:]*[\$£€¥¢₹₽¤]?([\d,]+\.?\d*)'},
-                {'type': 'regex', 'pattern': r'cost["\s:]*[\$£€¥¢₹₽¤]?([\d,]+\.?\d*)'},
-                {'type': 'regex', 'pattern': r'amount["\s:]*[\$£€¥¢₹₽¤]?([\d,]+\.?\d*)'},
-                {'type': 'regex', 'pattern': r'\$([0-9,]+\.[0-9]{2})'},
-                {'type': 'regex', 'pattern': r'£([0-9,]+\.[0-9]{2})'},
-                {'type': 'regex', 'pattern': r'€([0-9,]+\.[0-9]{2})'},
-                {'type': 'regex', 'pattern': r'([0-9,]+\.[0-9]{2})'},
-                {'type': 'regex', 'pattern': r'([0-9,]+\.[0-9]{1,2})'},
-                {'type': 'regex', 'pattern': r'([0-9,]+)'},
+                {'type': 'regex', 'pattern': r'[\$£€¥¢₹₽¤](?P<Product_Price>[\d,]+\.?\d*)'},
+                {'type': 'regex', 'pattern': r'price["\s:]*[\$£€¥¢₹₽¤]?(?P<Product_Price>[\d,]+\.?\d*)'},
+                {'type': 'regex', 'pattern': r'cost["\s:]*[\$£€¥¢₹₽¤]?(?P<Product_Price>[\d,]+\.?\d*)'},
+                {'type': 'regex', 'pattern': r'amount["\s:]*[\$£€¥¢₹₽¤]?(?P<Product_Price>[\d,]+\.?\d*)'},
+                {'type': 'regex', 'pattern': r'\$(?P<Product_Price>[0-9,]+\.[0-9]{2})'},
+                {'type': 'regex', 'pattern': r'£(?P<Product_Price>[0-9,]+\.[0-9]{2})'},
+                {'type': 'regex', 'pattern': r'€(?P<Product_Price>[0-9,]+\.[0-9]{2})'},
+                {'type': 'regex', 'pattern': r'(?P<Product_Price>[0-9,]+\.[0-9]{2})'},
+                {'type': 'regex', 'pattern': r'(?P<Product_Price>[0-9,]+\.[0-9]{1,2})'},
+                {'type': 'regex', 'pattern': r'(?P<Product_Price>[0-9,]+)'},
             ],
             'Brand': [
                 # 1. Meta tags (highest priority)
@@ -3812,10 +4143,10 @@ if result:
                 {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*make[^"]*"[^>]*>([A-Za-z0-9\s&.-]+)</span>'},
                 
                 # 6. Generic regex patterns (lowest priority)
-                {'type': 'regex', 'pattern': r'brand["\s:]*([A-Za-z0-9\s&.-]+)'},
-                {'type': 'regex', 'pattern': r'manufacturer["\s:]*([A-Za-z0-9\s&.-]+)'},
-                {'type': 'regex', 'pattern': r'make["\s:]*([A-Za-z0-9\s&.-]+)'},
-                {'type': 'regex', 'pattern': r'mfg["\s:]*([A-Za-z0-9\s&.-]+)'},
+                {'type': 'regex', 'pattern': r'brand["\s:]*(?P<Brand>[A-Za-z0-9\s&.-]+)'},
+                {'type': 'regex', 'pattern': r'manufacturer["\s:]*(?P<Brand>[A-Za-z0-9\s&.-]+)'},
+                {'type': 'regex', 'pattern': r'make["\s:]*(?P<Brand>[A-Za-z0-9\s&.-]+)'},
+                {'type': 'regex', 'pattern': r'mfg["\s:]*(?P<Brand>[A-Za-z0-9\s&.-]+)'},
             ],
             'Manufacturer': [
                 # 1. Meta tags (highest priority)
@@ -3850,10 +4181,10 @@ if result:
                 {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*mfg[^"]*"[^>]*>([A-Za-z0-9\s&.-]+)</span>'},
                 
                 # 6. Generic regex patterns (lowest priority)
-                {'type': 'regex', 'pattern': r'manufacturer["\s:]*([A-Za-z0-9\s&.-]+)'},
-                {'type': 'regex', 'pattern': r'maker["\s:]*([A-Za-z0-9\s&.-]+)'},
-                {'type': 'regex', 'pattern': r'mfg["\s:]*([A-Za-z0-9\s&.-]+)'},
-                {'type': 'regex', 'pattern': r'mfr["\s:]*([A-Za-z0-9\s&.-]+)'},
+                {'type': 'regex', 'pattern': r'manufacturer["\s:]*(?P<Manufacturer>[A-Za-z0-9\s&.-]+)'},
+                {'type': 'regex', 'pattern': r'maker["\s:]*(?P<Manufacturer>[A-Za-z0-9\s&.-]+)'},
+                {'type': 'regex', 'pattern': r'mfg["\s:]*(?P<Manufacturer>[A-Za-z0-9\s&.-]+)'},
+                {'type': 'regex', 'pattern': r'mfr["\s:]*(?P<Manufacturer>[A-Za-z0-9\s&.-]+)'},
             ],
             'Sku': [
                 # Meta tags
@@ -3880,7 +4211,7 @@ if result:
                 {'type': 'regex', 'pattern': r'"item_number"\s*:\s*"([A-Za-z0-9-_\s\.]+)"'},
                 {'type': 'regex', 'pattern': r'"product_number"\s*:\s*"([A-Za-z0-9-_\s\.]+)"'},
                 {'type': 'regex', 'pattern': r'"mpn"\s*:\s*"([A-Za-z0-9-_\s\.]+)"'},
-                {'type': 'regex', 'pattern': r'sku["\s:]*([A-Za-z0-9-_\s\.]+)'},
+                {'type': 'regex', 'pattern': r'sku["\s:]*(?P<Sku>[A-Za-z0-9-_\s\.]+)'},
                 {'type': 'regex', 'pattern': r'item\s*#?\s*:?\s*([A-Za-z0-9-_\s\.]+)'},
                 {'type': 'regex', 'pattern': r'item\s*number["\s:]*([A-Za-z0-9-_\s\.]+)'},
                 {'type': 'regex', 'pattern': r'product\s*#?\s*:?\s*([A-Za-z0-9-_\s\.]+)'},
@@ -4024,6 +4355,37 @@ if result:
                 # Generic product code patterns that match GTIN/UPC format
                 {'type': 'regex', 'pattern': r'"productCode"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
                 {'type': 'regex', 'pattern': r'"product_code"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
+                
+                # EAN patterns - integrated into Product_Code
+                # Meta tags - EAN specific
+                {'type': 'meta', 'attrs': {'itemprop': 'ean'}, 'attr': 'content'},
+                {'type': 'meta', 'attrs': {'name': 'ean'}, 'attr': 'content'},
+                {'type': 'meta', 'attrs': {'name': 'ean13'}, 'attr': 'content'},
+                {'type': 'meta', 'attrs': {'name': 'ean8'}, 'attr': 'content'},
+                # Data attributes - EAN specific
+                {'type': 'data', 'attr': 'data-ean'},
+                {'type': 'data', 'attr': 'data-ean13'},
+                {'type': 'data', 'attr': 'data-ean8'},
+                # CSS classes - EAN specific
+                {'type': 'class', 'classes': ['ean', 'ean13', 'ean8', 'product-ean', 'item-ean']},
+                # ID selectors - EAN specific
+                {'type': 'id', 'ids': ['ean', 'ean13', 'ean8', 'product-ean', 'item-ean']},
+                # Regex patterns - EAN format (8 or 13 digits primarily, but allow 12/14 for compatibility)
+                {'type': 'regex', 'pattern': r'<span[^>]*class="[^"]*ean[^"]*"[^>]*>(\d{8}|\d{12}|\d{13}|\d{14})</span>'},
+                {'type': 'regex', 'pattern': r'<div[^>]*class="[^"]*ean[^"]*"[^>]*>(\d{8}|\d{12}|\d{13}|\d{14})</div>'},
+                {'type': 'regex', 'pattern': r'"ean"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
+                {'type': 'regex', 'pattern': r'"ean13"\s*:\s*(?:null|"(\d{13})")'},
+                {'type': 'regex', 'pattern': r'"ean8"\s*:\s*(?:null|"(\d{8})")'},
+                {'type': 'regex', 'pattern': r'ean["\s#:]*(\d{8}|\d{12}|\d{13}|\d{14})'},
+                {'type': 'regex', 'pattern': r'ean13["\s#:]*(\d{13})'},
+                {'type': 'regex', 'pattern': r'ean8["\s#:]*(\d{8})'},
+                # EAN in structured data patterns
+                {'type': 'regex', 'pattern': r'"europeanArticleNumber"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
+                {'type': 'regex', 'pattern': r'"european_article_number"\s*:\s*(?:null|"(\d{8}|\d{12}|\d{13}|\d{14})")'},
+                # Table-based EAN patterns
+                {'type': 'regex', 'pattern': r'<td[^>]*class="[^"]*ean[^"]*"[^>]*>(\d{8}|\d{12}|\d{13}|\d{14})</td>'},
+                {'type': 'regex', 'pattern': r'<td[^>]*>EAN[:\s]*(\d{8}|\d{12}|\d{13}|\d{14})</td>'},
+                {'type': 'regex', 'pattern': r'<td[^>]*>European Article Number[:\s]*(\d{8}|\d{12}|\d{13}|\d{14})</td>'},
             ]
         }
         
@@ -4168,7 +4530,7 @@ if result:
                     'oemPartNumber', 'oem_part_number', 'catalogNumber', 'catalog_number',
                     'productModel', 'product_model', 'itemModel', 'item_model'
                 ],
-                'Product_Code': ['upc', 'gtin', 'barcode', 'productCode', 'product_code', 'ean']
+                'Product_Code': ['upc', 'gtin', 'barcode', 'productCode', 'product_code', 'ean', 'ean13', 'ean8', 'europeanArticleNumber', 'european_article_number']
             }
             
             for script in script_tags:
@@ -5011,7 +5373,7 @@ if result:
                 'Brand': ['brand', 'manufacturer', 'maker'], 
                 'Sku': ['sku', 'item', 'product', 'code'],
                 'Model_Number': ['model', 'mpn', 'part'],
-                'Product_Code': ['code', 'upc', 'barcode', 'item'],
+                'Product_Code': ['code', 'upc', 'barcode', 'item', 'ean', 'ean13', 'ean8', 'european'],
                 'Product_Price': ['price', 'cost', 'amount'],
                 'Product_Title': ['title', 'name', 'product']
             }
@@ -5322,15 +5684,31 @@ if result:
                 
                 # Handle both dict and list cases safely
                 if isinstance(field_pattern, dict):
-                    config['products'][0]['fields'][field_name] = {
-                        "regex": field_pattern.get('regex')
-                    }
+                    regex_pattern = field_pattern.get('regex')
+                    # Validate the regex pattern before adding it to config
+                    if regex_pattern and self._validate_regex_pattern(regex_pattern, field_name):
+                        config['products'][0]['fields'][field_name] = {
+                            "regex": regex_pattern
+                        }
+                    else:
+                        print(f"WARNING: Skipping invalid regex for {field_name}")
+                        config['products'][0]['fields'][field_name] = {
+                            "regex": None
+                        }
                 elif isinstance(field_pattern, list) and field_pattern:
                     # Take the first pattern if it's a list
                     first_pattern = field_pattern[0]
                     if isinstance(first_pattern, dict):
-                        config['products'][0]['fields'][field_name] = {
-                            "regex": first_pattern.get('regex')
+                        regex_pattern = first_pattern.get('regex')
+                        # Validate the regex pattern before adding it to config
+                        if regex_pattern and self._validate_regex_pattern(regex_pattern, field_name):
+                            config['products'][0]['fields'][field_name] = {
+                                "regex": regex_pattern
+                            }
+                        else:
+                            print(f"WARNING: Skipping invalid regex for {field_name}")
+                            config['products'][0]['fields'][field_name] = {
+                                "regex": None
                         }
                     else:
                         config['products'][0]['fields'][field_name] = {
