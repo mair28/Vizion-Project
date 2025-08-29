@@ -4518,16 +4518,18 @@ if result:
             script_tags = soup.find_all('script')
             
             field_mapping = {
-                'Product_Title': ['name', 'title', 'productName', 'product_name', 'productTitle', 'product_title'],
-                'Product_Price': ['price', 'cost', 'amount', 'productPrice', 'product_price'],
-                'Brand': ['brand', 'brandName', 'brand_name', 'manufacturer'],
-                'Manufacturer': ['manufacturer', 'maker', 'brand', 'mfg', 'mfr'],
-                'Sku': ['sku', 'itemNumber', 'item_number', 'productNumber', 'product_number', 'productId', 'product_id'],
+                'Product_Title': ['name', 'title', 'productName', 'product_name', 'productTitle', 'product_title', 'itemTitle', 'item_title'],
+                'Product_Price': ['price', 'cost', 'amount', 'productPrice', 'product_price', 'listPrice', 'list_price', 'unitPrice', 'unit_price'],
+                'Brand': ['brand', 'brandName', 'brand_name', 'manufacturer', 'make', 'brandCode', 'brand_code'],
+                'Manufacturer': ['manufacturer', 'maker', 'brand', 'mfg', 'mfr', 'manufacturerName', 'manufacturer_name', 'mfgName', 'mfg_name'],
+                'Sku': ['sku', 'itemNumber', 'item_number', 'productNumber', 'product_number', 'productId', 'product_id', 'codeSku', 'code_sku', 'skuCode', 'sku_code', 'itemCode', 'item_code'],
                 'Model_Number': [
                     'modelNumber', 'model_number', 'modelNum', 'model',
                     'mpn', 'partNumber', 'part_number', 'partNum', 'part',
                     'manufacturerPartNumber', 'manufacturer_part_number', 'mfgPartNumber', 'mfg_part_number',
                     'oemPartNumber', 'oem_part_number', 'catalogNumber', 'catalog_number',
+                    'codeMpn', 'code_mpn', 'mpnCode', 'mpn_code', 'codeModel', 'code_model', 'modelCode', 'model_code',
+                    'codePartNumber', 'code_part_number', 'partNumberCode', 'part_number_code',
                     'productModel', 'product_model', 'itemModel', 'item_model'
                 ],
                 'Product_Code': ['upc', 'gtin', 'barcode', 'productCode', 'product_code', 'ean', 'ean13', 'ean8', 'europeanArticleNumber', 'european_article_number']
@@ -4635,20 +4637,51 @@ if result:
         # Map JSON-LD fields to our field names
         field_mapping = {
             'name': 'Product_Title',
+            'title': 'Product_Title',
+            'productName': 'Product_Title',
+            'product_name': 'Product_Title',
             'brand': 'Brand',
+            'brandName': 'Brand',
+            'brand_name': 'Brand',
+            'brandCode': 'Brand',
+            'brand_code': 'Brand',
             'manufacturer': 'Manufacturer',
+            'manufacturerName': 'Manufacturer',
+            'manufacturer_name': 'Manufacturer',
             'make': 'Brand',
             'mfg': 'Manufacturer',
+            'mfgName': 'Manufacturer',
+            'mfg_name': 'Manufacturer',
             'mfr': 'Manufacturer',
             'sku': 'Sku',
+            'codeSku': 'Sku',
+            'code_sku': 'Sku',
+            'skuCode': 'Sku',
+            'sku_code': 'Sku',
             'itemNumber': 'Sku',
             'item_number': 'Sku',
+            'itemCode': 'Sku',
+            'item_code': 'Sku',
             'productNumber': 'Sku',
             'product_number': 'Sku',
             'model': 'Model_Number',
+            'modelNumber': 'Model_Number',
+            'model_number': 'Model_Number',
+            'codeModel': 'Model_Number',
+            'code_model': 'Model_Number',
+            'modelCode': 'Model_Number',
+            'model_code': 'Model_Number',
             'mpn': 'Model_Number',
+            'codeMpn': 'Model_Number',
+            'code_mpn': 'Model_Number',
+            'mpnCode': 'Model_Number',
+            'mpn_code': 'Model_Number',
             'partNumber': 'Model_Number',
             'part_number': 'Model_Number',
+            'codePartNumber': 'Model_Number',
+            'code_part_number': 'Model_Number',
+            'partNumberCode': 'Model_Number',
+            'part_number_code': 'Model_Number',
             'partNum': 'Model_Number',
             'manufacturerPartNumber': 'Model_Number',
             'manufacturer_part_number': 'Model_Number',
@@ -5369,13 +5402,13 @@ if result:
             
             # Strategy 1: Find elements with field-related classes or text
             field_keywords = {
-                'Manufacturer': ['manufacturer', 'maker', 'brand'],
-                'Brand': ['brand', 'manufacturer', 'maker'], 
-                'Sku': ['sku', 'item', 'product', 'code'],
-                'Model_Number': ['model', 'mpn', 'part'],
-                'Product_Code': ['code', 'upc', 'barcode', 'item', 'ean', 'ean13', 'ean8', 'european'],
-                'Product_Price': ['price', 'cost', 'amount'],
-                'Product_Title': ['title', 'name', 'product']
+                'Manufacturer': ['manufacturer', 'maker', 'brand', 'mfg', 'mfr', 'mfgname', 'mfg_name'],
+                'Brand': ['brand', 'manufacturer', 'maker', 'brandname', 'brand_name', 'brandcode', 'brand_code'], 
+                'Sku': ['sku', 'item', 'product', 'code', 'itemcode', 'item_code', 'skucode', 'sku_code', 'codesku', 'code_sku'],
+                'Model_Number': ['model', 'mpn', 'part', 'partnumber', 'part_number', 'modelcode', 'model_code', 'codempn', 'code_mpn', 'mpncode', 'mpn_code'],
+                'Product_Code': ['code', 'upc', 'barcode', 'item', 'ean', 'ean13', 'ean8', 'european', 'productcode', 'product_code'],
+                'Product_Price': ['price', 'cost', 'amount', 'listprice', 'list_price', 'unitprice', 'unit_price'],
+                'Product_Title': ['title', 'name', 'product', 'productname', 'product_name', 'itemtitle', 'item_title']
             }
             
             keywords = field_keywords.get(field_name, [field_name.lower().replace('_', '')])
